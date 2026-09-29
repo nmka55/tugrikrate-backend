@@ -98,6 +98,29 @@ class Config:
     # before giving up (Naiman Sharga has 3-day gaps).
     SOURCE_LOOKBACK_DAYS = _env_non_negative_int("SOURCE_LOOKBACK_DAYS", 7)
 
+    # International reference sources (Frankfurter). They publish a
+    # daily figure, so they run on their own hours-scale cadence rather
+    # than the bank one. INTL_DAILY_CALL_LIMIT is a self-imposed
+    # ceiling on outbound requests per UTC day (Frankfurter documents
+    # no cap, only abuse rate-limiting): the crawler refuses to send
+    # past it and the scheduler refuses to start if the configured
+    # cadence would need more than it - see app/utils/call_budget.py.
+    INTL_CRAWL_INTERVAL_HOURS = _env_positive_int(
+        "INTL_CRAWL_INTERVAL_HOURS", 12
+    )
+    INTL_DAILY_CALL_LIMIT = _env_positive_int("INTL_DAILY_CALL_LIMIT", 1000)
+    # Pause between the per-currency requests of one crawl.
+    INTL_REQUEST_PAUSE_MS = _env_non_negative_int("INTL_REQUEST_PAUSE_MS", 150)
+    # Most currencies that may fail (network, 5xx) in one crawl before
+    # the whole crawl is treated as failed and the last good snapshot
+    # kept, rather than publishing a set with holes in it.
+    INTL_MAX_FAILED_PERCENT = _env_non_negative_int(
+        "INTL_MAX_FAILED_PERCENT", 10
+    )
+    # Optional comma list restricting which currencies Frankfurter is
+    # asked for. Empty means every currency it lists (minus metals).
+    FRANKFURTER_CURRENCIES = _env_list("FRANKFURTER_CURRENCIES")
+
     # Freshness thresholds behind the v1 `status` field. A source is
     # `ok` while it succeeded within this multiple of its own interval,
     # `stale` after that, and `failing` once it has missed this many
@@ -125,6 +148,13 @@ class Config:
     SELF_PING_INTERVAL_SECONDS = _env_positive_int(
         "SELF_PING_INTERVAL_SECONDS", 30
     )
+
+    # Absolute origin used to build `logo_url` (e.g.
+    # https://api.example.com). Empty falls back to the request's own
+    # origin, which behind a TLS-terminating proxy is often http://
+    # rather than https:// - set this in production so the iOS app is
+    # never handed a cleartext image URL.
+    PUBLIC_BASE_URL = _env("PUBLIC_BASE_URL").rstrip("/")
 
     # Public API safeguards
     API_MAX_LIMIT = _env_positive_int("API_MAX_LIMIT", 100)
@@ -178,6 +208,9 @@ class Config:
         "CAPITRONBANK_API_URL",
         "https://www.capitronbank.mn/admin/en/wp-json/bank/rates/capitronbank",
     )
+
+    # International reference API (v2: v1 is ECB-only and has no MNT)
+    FRANKFURTER_URI = _env("FRANKFURTER_URI", "https://api.frankfurter.dev/v2")
 
     # Playwright-based bank URLs
     TDBM_URI = _env("TDBM_URI", "https://www.tdbm.mn/en/exchange-rates")

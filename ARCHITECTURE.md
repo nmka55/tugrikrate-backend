@@ -125,6 +125,11 @@ correctness bug, not a style question.
 | `app/models/snapshot.py` | `sources`, `rate_snapshots`, `source_state` schema. |
 | `app/api/routers/v1.py` | The public contract. Treat as frozen. |
 | `app/utils/decimals.py` | Locale-independent exact parsing. |
+| `app/crawlers/frankfurter.py` | International reference rates (not a bank). One request per currency; own call budget. Not in `HTTP_CRAWLERS`, so `crawlers/__init__.py` stays identical to upstream. |
+| `app/utils/call_budget.py` | Hard per-UTC-day ceiling on outbound requests; the scheduler refuses to start a cadence that would exceed it. |
+| `app/sources/logos.py` + `app/static/logos/` | Logo files and `manifest.json` (hash, size, provenance). Read at request time; nothing is fetched at request time. |
+| `scripts/fetch_logos.py` | Refreshes the logos and the manifest. Verifies each App Store publisher. |
+| `scripts/export_openapi.py` → `docs/openapi.json` | Committed contract snapshot; `tests/test_openapi.py` fails when stale. |
 
 ### Data model
 
@@ -145,6 +150,7 @@ All Asia/Ulaanbaatar, because banks republish on their own working day.
 | --- | --- | --- |
 | 10 JSON sources (`fast`) | every 15 min | hourly |
 | 5 Playwright sources (`slow`) | hourly | every 4 h |
+| Frankfurter (`daily`, HTTP side) | every `INTL_CRAWL_INTERVAL_HOURS` (12) around the clock, ~324 requests/day | |
 
 Every trigger carries ±`CRAWL_JITTER_SECONDS` so no bank sees an exact
 interval boundary. `CRAWL_GROUP` (`all`/`fast`/`slow`) lets the
@@ -222,6 +228,126 @@ Mongolia, Capitron Bank, Bogd Bank, Chinggis Khaan Bank. Where several
 registered forms exist (Bogd: "of Mongolia" / JSC / Llc) the short
 brand is used and the variants are listed in `name_evidence`.
 
+### Why Frankfurter is built the way it is
+
+Everything below was read off the live API on 2026-09-29, not assumed:
+
+- **`/v1` cannot be used.** It is ECB-only (30 currencies) and answers
+  `{"message":"not found"}` for MNT. `/v2` lists 166 currencies and
+  serves MNT. Base URL `https://api.frankfurter.dev/v2`.
+- **One request per currency.** `/v2/rates?base=X&quotes=MNT` returns
+  `[{"date","base","quote","rate"}]` - MNT per 1 X, the feed's own
+  format. `base` takes a single currency (`base=EUR,USD` is a 422), and
+  inverting `base=MNT` is useless: the source rounds to ~5 significant
+  digits, so MNT→USD returns `0.00028`. Its direct KZT→USD is
+  `0.00227` (3 digits); KZT→MNT is `8.1477`. That is why the feed
+  carries **MNT per unit for every currency** and lets the app divide
+  for foreign↔foreign conversion: it is more precise than any direct
+  pair the source offers.
+- **Reference channel, no spread.** One blended mid figure per pair, no
+  buy/sell, no channel → `reference`/`reference`, exactly like the Bank
+  of Mongolia (invariants 2 and 3). Nothing is derived or crossed
+  through USD.
+- **It is not an independent market rate.** Rates are blended across
+  the central banks that publish the pair (`expand=providers` shows the
+  contributors). For USD/MNT they are BDI, BOM, CBKKW, CBR, CBU, NBK,
+  NBKR, NBP; BDI, BOM and CBR carry the Bank of Mongolia's own figure
+  (3595.17), NBP's is six days old (3632.14). Blend 3594.95. Treat it
+  as "what central banks say", tracking our Bank of Mongolia source.
+  The blend moves during the day as providers publish (EUR read 4093.69
+  and 4093.55 an hour apart).
+- **Excluded:** MNT itself and the four metals (XAU/XAG/XPD/XPT), which
+  the banks already publish and quote in inconsistent units.
+  Currencies whose catalogue entry ended >7 days ago are skipped.
+  161 currencies are served.
+- **Failure policy.** 404 / unpublished pair → skipped with a warning.
+  HTTP 429 and call-budget exhaustion → abort the crawl at once. More
+  than `INTL_MAX_FAILED_PERCENT` (10%) failing → the whole crawl fails
+  and the last good snapshot stays, rather than publishing holes.
+  Each response row is checked to be the pair that was asked for.
+- **Call budget.** Frankfurter documents no quota ("no monthly or daily
+  caps", only abuse rate-limiting), so the limit is self-imposed:
+  `INTL_DAILY_CALL_LIMIT` (1000). A crawl costs 162 requests (1
+  catalogue + 161 pairs); at 12 h that is ~324/day. `DailyCallBudget`
+  refuses the request that would cross the ceiling, and
+  `build_scheduler` raises `ValueError` at startup if the configured
+  interval would plan more than the ceiling (`INTL_CRAWL_INTERVAL_HOURS=1`
+  is rejected). A live crawl takes ~84 s from the sandbox (150 ms pause
+  between requests).
+- **Freshness.** Its stated date is the newest date across pairs.
+  `published_stale_hours=96` (not the banks' 36) because providers do
+  not publish at weekends. Status turns stale after 3 missed crawls
+  (36 h).
+- **Licence.** Free for commercial use, but "the rates themselves fall
+  under each provider's terms". Not audited per provider; the Russian
+  and Kuwaiti central banks publish terms/disclaimers. Revisit before a
+  public launch.
+
+### Why ExchangeRate-API was rejected
+
+Evaluated and **not built**, by decision of the project owner. Its Terms
+(exchangerate-api.com/terms) say the licence "does not permit
+re-distribution of our data" and that it "may only be used for your end
+purposes and not in any product or service that offers programmatic or
+automatic access to exchange rate data"; the open endpoint also
+requires an attribution link. `GET /v1/rates` *is* a programmatic
+rates API, so serving their data through it would likely breach the
+Terms. Facts kept for whoever revisits it: open endpoint
+`open.er-api.com/v6/latest/{BASE}`, no key, 166 currencies incl. MNT,
+updates once per 24 h and states `time_next_update_unix`, rate-limited
+(429, 20-minute cooldown) with hourly requests "never rate limited";
+registered free key 1.5k requests/month. A replacement API is being
+sought by the owner - anything added must pass the same test: does its
+licence allow republishing through an API?
+
+### Why logos are hosted copies with recorded provenance
+
+- **Hosted, not hot-linked.** Bank sites change URLs without notice and
+  some block by IP (Khan Bank returns an "Access Denied" page to
+  datacenter addresses). `scripts/fetch_logos.py` downloads once into
+  `app/static/logos/`; `manifest.json` records file, SHA-256, size,
+  dimensions, origin URL and page, publisher and retrieval time.
+- **App Store icon first.** Each institution's own iOS app icon is a
+  uniform 512×512 raster - what a list row wants, and UIImage cannot
+  load SVG from a URL (several banks' site logos are SVG-only, wide
+  wordmarks, or 16-px favicons). The App Store lookup's `sellerName`
+  must contain the expected publisher or the script fails, so an app id
+  taken over by someone else cannot silently ship the wrong logo.
+  Twelve logos come from there; Bank of Mongolia (its
+  apple-touch-icon), CK Bank (site icon, 128 px) and Frankfurter (its
+  declared 512-px icon) from their own sites.
+- **Naiman Sharga has no logo, on purpose.** Its only app is published
+  by an individual, and its Wix site declares no icon of its own.
+  Provenance cannot be established, so `logo_url` is `null` (invariant
+  3). It is pinned in `tests/test_logos.py` (`NO_LOGO`).
+- **Capitron discrepancy.** Its site favicon (32 px) is a different mark
+  from its app icon. The app icon is used; noted in the manifest.
+- **Serving.** `logo_url` is absolute: `PUBLIC_BASE_URL` if set, else
+  the request origin - **set it in production**, or behind a TLS proxy
+  the app may be handed `http://`. The URL embeds `?v=<sha256[:12]>`
+  and is served with `Cache-Control: max-age=604800`, so a replaced
+  logo is a new URL. `/static/` is exempt from the 60/min rate limit
+  (16 images fetched at first launch would starve `/v1/rates`); the
+  ETag hashes the logo path, not the host.
+- **Trademarks.** The logos are the institutions' marks, shown to
+  identify them (nominative use). They are not covered by the repo's
+  MIT licence.
+
+### OpenAPI
+
+FastAPI generates OpenAPI 3.1 at `/openapi.json` (Swagger UI at `/`).
+**The mobile app does not need it to keep working** - it decodes JSON
+with `Codable` at runtime, and nothing consults the spec. Its value is
+(a) generating Swift models (swift-openapi-generator) instead of
+hand-writing DTOs and (b) review: `docs/openapi.json` is committed and
+`tests/test_openapi.py` fails when it drifts, so a wire-format change
+cannot land unnoticed. To make generated types correct, `schema_version`
+has no default (a default marks it optional → `Int?`), `/v1/rates`
+documents `ETag` and the 304, and `/v1/sources` and history now have
+response models. Runtime type mismatches are still guarded by the
+tolerant-decoding rules in `docs/mobile-integration-prompt.md`
+(non-exhaustive enums, `Decimal` from strings, nullable `logo_url`).
+
 ### Why the payload hash is canonical, not raw
 
 Change detection keys on `payload_hash`. Hashing the raw HTTP body
@@ -290,57 +416,19 @@ behind real timestamps. Drop it by hand when satisfied.
       (additive; `schema_version` stays 1). See §5.
 - [x] 235 tests; isort/black/ruff clean.
 
-**Requested but NOT built yet - blocked on network access.** Asked for
-in the same session: (1) international sources Frankfurter and
-ExchangeRate-API, normalised into the existing feed format; (2) source
-logos crawled and served as image URLs. Both need to *read live
-payloads*, which invariant-first practice here demands before any
-crawler is written (§5: four bugs were found only by reading payloads).
-The sandbox egress proxy returned 403 for `api.frankfurter.dev`,
-`open.er-api.com`, `frankfurter.dev`, `exchangerate-api.com` and all
-15 bank sites. Nothing below has been verified against a live response.
+**2026-09-29 (later still) - international source, logos, OpenAPI.**
+Network access was opened mid-session, so payloads could finally be
+read; nothing above was assumed.
 
-Researched so far, **secondhand** (search snippets, plus the Frankfurter
-maintainer's GitHub reply, which was read directly):
-
-| | Frankfurter | ExchangeRate-API |
-| --- | --- | --- |
-| Key needed | No | Open-access endpoint `open.er-api.com`: no. Registered free key: yes |
-| Daily cap | **None.** Maintainer, discussion #42: "Short answer, there are no limits." Abuse rate-limiting only | Open endpoint is rate-limited with no stated daily number. Docs: request once per 24 h and you never need worry; hourly "and never get rate limited". Registered free key: 1,500 calls/**month** (~48/day) |
-| Data refresh | Central-bank daily sources (ECB et al.) | Once per day (open endpoint) |
-| Currencies | Fewer (ECB-derived core set; the repo now also mentions a `/v2` API with more providers) | 160+, MNT expected |
-| Unknowns | **Whether MNT is published at all** - unread. Whether `/v1` or `/v2` is current | Response shape, `time_next_update_unix` semantics, attribution terms |
-
-Decisions already made for when this is built (so they are not
-re-litigated):
-
-- Neither is a bank quote. Each publishes a single mid/reference rate,
-  so quotes are `channel: "reference"`, `side: "reference"` - the same
-  as the Bank of Mongolia (invariants 2 and 3). No buy/sell spread is
-  ever synthesised.
-- A rate MNT does not appear in the source's own payload is **not**
-  derived by crossing through USD. That would be inference, not
-  publication. If Frankfurter carries no MNT, it ships with no MNT
-  quotes rather than computed ones.
-- Both must use `json_exact`/`parse_decimal` - no floats - and their
-  payload hash must strip volatile keys.
-- Call budget is a hard guard in code, not only a cron cadence: a
-  per-source daily ledger that refuses to fetch past a configured
-  ceiling, and honours the source's own next-update time if it states
-  one. Target: well under the limits above, e.g. ExchangeRate-API at
-  most once every 6 h (4/day).
-- Quote direction: MNT per 1 unit of foreign currency, matching every
-  bank quote. Both APIs return "units of X per 1 base", so the
-  inversion `1 / rate` must be done in `Decimal` with a fixed,
-  documented precision and recorded in the source's `evidence`.
-- Logos: fetched by a script/job, stored as static files we host and
-  served by absolute URL - never hot-linked to the bank's site, whose
-  URL can change. Not built.
-
-**Unblock:** add these hosts to the environment's allowed domains (or
-raise Network access): `api.frankfurter.dev`, `frankfurter.dev`,
-`open.er-api.com`, `www.exchangerate-api.com`, and the 15 bank hosts
-in `app/config.py` (plus `send.mn`, the current SendMN site).
+- [x] **Frankfurter** as source #16 (`international_aggregator`,
+      reference channel, 161 currencies, MNT per unit). Verified end to
+      end against the live API: crawl → snapshot → `/v1/rates`, hash
+      stable on re-crawl, 304 works. Call budget + startup guard.
+- [x] **Logos** for 15 of 16 sources (`logo_url`), with provenance
+      manifest and publisher verification. Naiman Sharga: none, see §5.
+- [x] **OpenAPI** snapshot + drift test; remaining v1 endpoints typed.
+- [x] Rejected ExchangeRate-API (licence) - see §5.
+- [x] 314 tests; isort/black/ruff clean.
 
 **Not done / known gaps**
 
@@ -348,6 +436,13 @@ in `app/config.py` (plus `send.mn`, the current SendMN site).
 - [ ] **No production deployment.** Local SQLite only. A real
       deployment needs Postgres (free tiers have no persistent disk)
       and a decision on the Playwright worker split.
+- [ ] **A second international source is wanted** (ExchangeRate-API
+      rejected). Must allow republishing through an API.
+- [ ] **Frankfurter licence not audited per provider** (§5).
+- [ ] **Bank sites were spot-checked, not all crawled from the sandbox.**
+      Khan Bank blocks datacenter IPs and NIB's certificate chain does
+      not verify here; their *crawlers* are untested in this sandbox.
+      Logos for them came from the App Store.
 - [ ] **CKBank tiered rates are collapsed.** It publishes two USD rows
       (`5000 хүртэл` / `5000-с дээш`); the contract has no tier
       dimension so the first wins. Adding tiers is a v2 contract change.

@@ -19,10 +19,21 @@ from apscheduler.triggers.cron import CronTrigger
 
 from app.config import config
 from app.services.collector import crawl_sources
-from app.sources.registry import CADENCE_SLOW, specs_for_group
+from app.sources.registry import (
+    CADENCE_DAILY,
+    CADENCE_FAST,
+    CADENCE_SLOW,
+    specs_for_group,
+)
+from app.utils.call_budget import planned_daily_calls
 from app.utils.logger import logger
 
 _scheduler: BackgroundScheduler | None = None
+
+# Frankfurter lists 166 currencies; MNT and the four metals are not
+# requested. Deliberately a little high so growth in its catalogue does
+# not silently break the budget check.
+_INTL_CURRENCY_ESTIMATE = 170
 
 
 def _active_hours() -> list[int]:
@@ -100,8 +111,9 @@ def build_scheduler(group: str | None = None) -> BackgroundScheduler:
     """
     group = group or config.CRAWL_GROUP
     owned = specs_for_group(group)
-    http = tuple(s for s in owned if s.cadence != CADENCE_SLOW)
+    http = tuple(s for s in owned if s.cadence == CADENCE_FAST)
     browser = tuple(s for s in owned if s.cadence == CADENCE_SLOW)
+    daily = tuple(s for s in owned if s.cadence == CADENCE_DAILY)
 
     scheduler = BackgroundScheduler(timezone=config.CRAWL_TIMEZONE)
     active, offpeak = _active_hours(), _offpeak_hours()
@@ -119,7 +131,44 @@ def build_scheduler(group: str | None = None) -> BackgroundScheduler:
         offpeak_interval * slow_mult,
         offpeak,
     )
+    if daily:
+        _check_call_budget()
+        # One job around the clock: these publish once a day, so the
+        # banking-hours split has no meaning for them.
+        _register(
+            scheduler,
+            "intl-daily",
+            daily,
+            config.INTL_CRAWL_INTERVAL_HOURS * 60,
+            list(range(24)),
+        )
     return scheduler
+
+
+def _check_call_budget() -> None:
+    """Refuse to start a schedule that needs more requests per day than
+    the configured ceiling allows. Failing at startup is loud; letting
+    the runtime guard silently starve the last crawls of the day is not.
+    """
+    # Imported here: the crawler module builds its budget from config
+    # at import time, which the scheduler tests must not depend on.
+    from app.crawlers.frankfurter import BUDGET
+
+    # +1 for the currency catalogue request that starts every crawl.
+    calls_per_crawl = _INTL_CURRENCY_ESTIMATE + 1
+    planned = planned_daily_calls(
+        config.INTL_CRAWL_INTERVAL_HOURS, calls_per_crawl
+    )
+    if planned > BUDGET.limit:
+        raise ValueError(
+            f"INTL_CRAWL_INTERVAL_HOURS={config.INTL_CRAWL_INTERVAL_HOURS} "
+            f"plans ~{planned} calls/day but INTL_DAILY_CALL_LIMIT="
+            f"{BUDGET.limit}; lengthen the interval or raise the limit"
+        )
+    logger.info(
+        f"International call budget: ~{planned} planned of "
+        f"{BUDGET.limit} calls/day"
+    )
 
 
 def start() -> BackgroundScheduler | None:

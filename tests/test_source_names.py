@@ -35,6 +35,8 @@ OFFICIAL_NAMES = {
         "Үндэсний Хөрөнгө Оруулалтын Банк",
     ),
     "transbank": ("TransBank", "Тээвэр Хөгжлийн Банк"),
+    # A foreign service: the Mongolian name is a transliteration.
+    "frankfurter": ("Frankfurter", "Франкфуртер"),
 }
 
 CYRILLIC = re.compile(r"[А-Яа-яЁёӨөҮү]")

@@ -126,6 +126,9 @@ def collect(spec: SourceSpec, target_date: str) -> CrawlResult:
     crawler = spec.crawler(target_date)
     rates = crawler.crawl() or {}
     quotes, warnings = build_quotes(spec, rates)
+    # Crawlers that make many requests (Frankfurter) collect their own
+    # non-fatal notes; upstream-shaped ones simply have none.
+    warnings.extend(getattr(crawler, "warnings", None) or [])
 
     return CrawlResult(
         source_id=spec.id,

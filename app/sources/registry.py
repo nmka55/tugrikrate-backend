@@ -35,6 +35,7 @@ from app.crawlers import (
     TransBank,
     XacBank,
 )
+from app.crawlers.frankfurter import Frankfurter
 from app.sources.models import (
     CHANNEL_CASH,
     CHANNEL_NONCASH,
@@ -50,12 +51,17 @@ TYPE_COMMERCIAL = "commercial_bank"
 TYPE_CENTRAL = "central_bank"
 TYPE_EXCHANGE = "exchange_bureau"
 TYPE_REMITTANCE = "remittance"
+# Not a bank: blends other institutions' published figures.
+TYPE_INTERNATIONAL = "international_aggregator"
 
 # Cadence classes. "slow" is the Playwright set - headless Chromium is
 # far heavier per crawl, so these run on a multiple of the base interval
 # (CRAWL_PLAYWRIGHT_MULTIPLIER).
 CADENCE_FAST = "fast"
 CADENCE_SLOW = "slow"
+# Sources that publish one figure a day (Frankfurter). Scheduled on an
+# hours-scale interval, INTL_CRAWL_INTERVAL_HOURS, on the HTTP side.
+CADENCE_DAILY = "daily"
 
 # Never published. Every source that lists MNT lists it as 1, which is
 # a self-reference, not an exchange rate.
@@ -110,6 +116,9 @@ class SourceSpec:
     # without the rates changing and would otherwise force a new
     # snapshot on every single crawl.
     volatile_keys: frozenset[str] = field(default_factory=frozenset)
+    # Overrides PUBLISHED_STALE_HOURS for sources whose stated date
+    # legitimately lags longer (weekends, provider holidays).
+    published_stale_hours: int | None = None
 
     @property
     def channels(self) -> frozenset[str]:
@@ -425,9 +434,10 @@ SPECS: tuple[SourceSpec, ...] = (
         name_evidence=(
             "transbank.mn page title is 'Тээвэр хөгжлийн банк' (= "
             "Transport Development Bank); zangia.mn profile 'Тээвэр "
-            "хөгжлийн банк / Trans bank'; Facebook 'TransBank'. The old "
-            "'Транс Банк' was a phonetic rendering of the brand, not the "
-            "registered Mongolian name. Was 'Trans Bank'."
+            "хөгжлийн банк / Trans bank'; Facebook 'TransBank'; its App "
+            "Store app is published by 'Transport and Development Bank "
+            "LLC'. The old 'Транс Банк' was a phonetic rendering of the "
+            "brand, not the registered Mongolian name. Was 'Trans Bank'."
         ),
         type=TYPE_COMMERCIAL,
         crawler=TransBank,
@@ -444,6 +454,36 @@ SPECS: tuple[SourceSpec, ...] = (
             "State Bank's 3589/3615 and 3589/3597 the same day."
         ),
     ),
+    SourceSpec(
+        id="frankfurter",
+        name="Frankfurter",
+        name_mn="Франкфуртер",
+        name_evidence=(
+            "The service calls itself 'Frankfurter' (frankfurter.dev, "
+            "api.frankfurter.dev). It is a foreign service with no "
+            "official Mongolian name: 'Франкфуртер' is a Cyrillic "
+            "transliteration, not a registered name."
+        ),
+        type=TYPE_INTERNATIONAL,
+        crawler=Frankfurter,
+        cadence=CADENCE_DAILY,
+        slots=(Slot("cash.buy", CHANNEL_REFERENCE, SIDE_REFERENCE),),
+        evidence=(
+            "GET /v2/rates?base=X&quotes=MNT returns one object per "
+            "call, {date, base, quote, rate}: MNT per 1 X, one mid "
+            "figure with no buy/sell and no channel, so reference/"
+            "reference like the Bank of Mongolia. Blended across the "
+            "central-bank providers that publish the pair (for USD, "
+            "eight: BDI, BOM, CBKKW, CBR, CBU, NBK, NBKR, NBP, of "
+            "which BDI, BOM and CBR carry the Bank of Mongolia's own "
+            "figure), so it is NOT an independent market rate - it "
+            "tracks the Bank of Mongolia reference closely (USD "
+            "3594.95 vs 3595.17). Rounded to ~5 significant digits by "
+            "the source. v1 is ECB-only with no MNT; v2 is required. "
+            "Rates fall under each provider's own terms."
+        ),
+        published_stale_hours=96,
+    ),
 )
 
 BY_ID: dict[str, SourceSpec] = {spec.id: spec for spec in SPECS}
@@ -453,17 +493,19 @@ BY_BANK_NAME: dict[str, SourceSpec] = {
 
 FAST_SPECS = tuple(s for s in SPECS if s.cadence == CADENCE_FAST)
 SLOW_SPECS = tuple(s for s in SPECS if s.cadence == CADENCE_SLOW)
+DAILY_SPECS = tuple(s for s in SPECS if s.cadence == CADENCE_DAILY)
 
 
 def specs_for_group(group: str) -> tuple[SourceSpec, ...]:
     """The sources a process configured with `group` is responsible for.
 
-    The split is by cadence class, which is also the split by cost: the
-    "slow" group is exactly the five Playwright sources, each of which
-    needs a headless Chromium.
+    The split is by cost: the "slow" group is exactly the five
+    Playwright sources, each of which needs a headless Chromium. Every
+    plain-HTTP source - the bank JSON endpoints and the daily
+    international ones - belongs to "fast".
     """
     if group == "fast":
-        return FAST_SPECS
+        return FAST_SPECS + DAILY_SPECS
     if group == "slow":
         return SLOW_SPECS
     return SPECS

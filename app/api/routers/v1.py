@@ -20,10 +20,12 @@ from pydantic import BaseModel, Field, field_serializer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import config
 from app.db import snapshots as snapshot_repo
 from app.db.database import get_db
 from app.models.snapshot import RateSnapshot
 from app.services.freshness import compute_status
+from app.sources.logos import logo_path
 from app.sources.registry import BY_ID, SPECS
 
 router = APIRouter(prefix="/v1", tags=["v1"])
@@ -86,7 +88,25 @@ class SourceOut(BaseModel):
         description="Official Mongolian (Cyrillic) name.",
         examples=["Хаан Банк"],
     )
-    type: str = Field(examples=["commercial_bank"])
+    logo_url: Optional[str] = Field(
+        description=(
+            "Absolute URL of this source's logo (PNG or JPEG, square "
+            "where the source has an app icon). Null when no logo of "
+            "verified provenance exists. The URL embeds a content hash, "
+            "so it can be cached indefinitely."
+        ),
+        examples=[
+            "https://api.example.com/static/logos/khanbank.jpg?v=ab12cd34ef56"
+        ],
+    )
+    type: str = Field(
+        description=(
+            "commercial_bank | central_bank | exchange_bureau | "
+            "remittance | international_aggregator. Treat as "
+            "non-exhaustive."
+        ),
+        examples=["commercial_bank"],
+    )
     status: str = Field(
         description=(
             "ok | stale | failing. A stale or failing source still "
@@ -114,13 +134,60 @@ class SourceOut(BaseModel):
 
 
 class RatesResponse(BaseModel):
-    schema_version: int = Field(default=SCHEMA_VERSION, examples=[1])
+    # No default: a default makes OpenAPI list the field as optional,
+    # and a generated Swift client would then type it `Int?`.
+    schema_version: int = Field(
+        description="Contract version. Bumped on any breaking change.",
+        examples=[1],
+    )
     generated_at: datetime
     sources: list[SourceOut]
 
     @field_serializer("generated_at")
     def _serialize_generated(self, value: datetime) -> str:
         return _iso_z(value)
+
+
+class SourceInfoOut(BaseModel):
+    id: str = Field(examples=["khanbank"])
+    name: str
+    name_mn: str
+    name_evidence: str = Field(
+        description="Where the two names came from (for re-checking)."
+    )
+    logo_url: Optional[str]
+    type: str
+    cadence: str = Field(description="fast | slow | daily", examples=["fast"])
+    channels: list[str] = Field(examples=[["cash", "noncash"]])
+    evidence: str = Field(
+        description="How each channel/side label was confirmed."
+    )
+
+
+class SourcesResponse(BaseModel):
+    schema_version: int
+    sources: list[SourceInfoOut]
+
+
+class HistorySourceOut(BaseModel):
+    id: str
+    name: str
+    name_mn: str
+    type: str
+
+
+class HistorySnapshotOut(BaseModel):
+    fetched_at: Optional[str]
+    published_at: Optional[str]
+    last_checked_at: Optional[str]
+    payload_hash: str
+    quotes: list[QuoteOut]
+
+
+class HistoryResponse(BaseModel):
+    schema_version: int
+    source: HistorySourceOut
+    snapshots: list[HistorySnapshotOut]
 
 
 def _filter_quotes(raw: list, currencies: set[str] | None) -> list[dict]:
@@ -137,8 +204,16 @@ def _parse_currencies(raw: str | None) -> set[str] | None:
     return codes or None
 
 
+def _logo_url(source_id: str, base_url: str) -> str | None:
+    path = logo_path(source_id)
+    return f"{base_url}{path}" if path else None
+
+
 def _build_payload(
-    db: Session, currencies: set[str] | None, source_ids: set[str] | None
+    db: Session,
+    currencies: set[str] | None,
+    source_ids: set[str] | None,
+    base_url: str = "",
 ) -> RatesResponse:
     latest = snapshot_repo.latest_snapshots(db)
     states = snapshot_repo.source_states(db)
@@ -154,6 +229,7 @@ def _build_payload(
                 id=spec.id,
                 name=spec.name,
                 name_mn=spec.name_mn,
+                logo_url=_logo_url(spec.id, base_url),
                 type=spec.type,
                 status=compute_status(
                     spec, snapshot, states.get(spec.id), now
@@ -172,10 +248,16 @@ def _build_payload(
             )
         )
 
-    return RatesResponse(generated_at=now, sources=sources)
+    return RatesResponse(
+        schema_version=SCHEMA_VERSION, generated_at=now, sources=sources
+    )
 
 
-def _etag(payload: RatesResponse) -> str:
+def _base_url(request: Request) -> str:
+    return config.PUBLIC_BASE_URL or str(request.base_url).rstrip("/")
+
+
+def _etag(payload: RatesResponse, base_url: str = "") -> str:
     """Identifies the rate content, deliberately excluding
     `generated_at` - otherwise every response would be a new ETag and
     the app could never get a 304."""
@@ -184,6 +266,9 @@ def _etag(payload: RatesResponse) -> str:
         digest.update(source.id.encode())
         digest.update(source.name.encode())
         digest.update(source.name_mn.encode())
+        # Hash the logo path, not the host: the same rates must keep
+        # the same ETag whichever address the app reached us on.
+        digest.update((source.logo_url or "")[len(base_url) :].encode())
         digest.update(source.status.encode())
         digest.update(str(source.fetched_at).encode())
         for quote in source.quotes:
@@ -198,6 +283,17 @@ def _etag(payload: RatesResponse) -> str:
     "/rates",
     response_model=RatesResponse,
     summary="All sources, latest rates",
+    responses={
+        200: {
+            "headers": {
+                "ETag": {
+                    "description": "Send back as If-None-Match.",
+                    "schema": {"type": "string"},
+                }
+            }
+        },
+        304: {"description": "Unchanged since the supplied ETag; no body."},
+    },
 )
 def get_rates(
     request: Request,
@@ -219,9 +315,12 @@ def get_rates(
     """
     source_ids = _parse_currencies(source)
     source_ids = {s.lower() for s in source_ids} if source_ids else None
-    payload = _build_payload(db, _parse_currencies(currency), source_ids)
+    base_url = _base_url(request)
+    payload = _build_payload(
+        db, _parse_currencies(currency), source_ids, base_url
+    )
 
-    etag = _etag(payload)
+    etag = _etag(payload, base_url)
     response.headers["ETag"] = etag
     response.headers["Cache-Control"] = "public, max-age=60"
     if request.headers.get("if-none-match") == etag:
@@ -231,9 +330,10 @@ def get_rates(
 
 @router.get(
     "/sources",
+    response_model=SourcesResponse,
     summary="Source registry, with the evidence behind each mapping",
 )
-def get_sources():
+def get_sources(request: Request):
     """What each source publishes and why we believe it.
 
     The `evidence` strings record how each channel/side label was
@@ -248,6 +348,7 @@ def get_sources():
                 "name": spec.name,
                 "name_mn": spec.name_mn,
                 "name_evidence": spec.name_evidence,
+                "logo_url": _logo_url(spec.id, _base_url(request)),
                 "type": spec.type,
                 "cadence": spec.cadence,
                 "channels": sorted(spec.channels),
@@ -260,7 +361,9 @@ def get_sources():
 
 @router.get(
     "/rates/{source_id}/history",
+    response_model=HistoryResponse,
     summary="Snapshot history for one source",
+    responses={404: {"description": "Unknown source id."}},
 )
 def get_history(
     source_id: str,

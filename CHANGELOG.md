@@ -6,6 +6,23 @@
 
 ### Added
 
+- **Frankfurter** as a 16th source (`type: "international_aggregator"`):
+  161 currencies as MNT per unit on the `reference` channel, so the app
+  can convert foreign↔foreign by division. Uses Frankfurter `/v2`
+  (`/v1` has no MNT). Runs every 12 h under a hard 1000-requests/day
+  ceiling (~324 planned); the scheduler refuses to start a cadence that
+  would exceed it. New config: `INTL_CRAWL_INTERVAL_HOURS`,
+  `INTL_DAILY_CALL_LIMIT`, `INTL_REQUEST_PAUSE_MS`,
+  `INTL_MAX_FAILED_PERCENT`, `FRANKFURTER_CURRENCIES`, `FRANKFURTER_URI`.
+- `logo_url` on every source in `GET /v1/rates` and `/v1/sources`
+  (null for Naiman Sharga, whose logo provenance could not be
+  established). Logos are hosted at `/static/logos/` with a provenance
+  manifest; refresh with `python -m scripts.fetch_logos`. New config:
+  `PUBLIC_BASE_URL` (set it in production).
+- `docs/openapi.json` (regenerate with `python -m scripts.export_openapi`)
+  and a test that fails when it is stale. `/v1/sources` and history now
+  have response models; `/v1/rates` documents `ETag` and 304.
+
 - `name_mn` (official Mongolian name) on every source in
   `GET /v1/rates` and `/v1/rates/{id}/history`; `name_evidence` on
   `/v1/sources`. Additive, `schema_version` remains 1.
@@ -18,7 +35,16 @@
   Bank` -> `... of Mongolia`; `National Investment Bank` -> `... of
   Mongolia`; `Хас Банк` -> `ХасБанк`; `М Банк` -> `М банк`; Naiman
   Sharga and SendMN Mongolian names. Evidence in ARCHITECTURE.md §5.
-- The ETag now covers source names, so a rename reaches cached clients.
+- The ETag now covers source names and logo paths, so a rename or a
+  replaced logo reaches cached clients.
+- `RatesResponse.schema_version` is now a required field in the OpenAPI
+  schema (the value is unchanged, still 1).
+- The rate limiter no longer counts `/static/` requests.
+
+### Rejected
+
+- ExchangeRate-API: its Terms forbid re-distribution and use in any
+  service offering programmatic access to rates. See ARCHITECTURE.md §5.
 
 ## [2.0.0] - 2026-09-29
 

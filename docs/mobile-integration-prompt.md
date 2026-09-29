@@ -36,7 +36,7 @@ are on the same Wi-Fi.
 `?currency=USD,EUR` and `?source=khanbank,golomtbank`.
 
 Real response (trimmed to one currency and three sources; the full
-response is 15 sources, 43 currencies, ~587 quotes):
+response is 16 sources, ~200 currencies, ~750 quotes):
 
 ```json
 {
@@ -47,6 +47,7 @@ response is 15 sources, 43 currencies, ~587 quotes):
       "id": "khanbank",
       "name": "Khan Bank",
       "name_mn": "Хаан Банк",
+      "logo_url": "http://192.168.0.143:8000/static/logos/khanbank.jpg?v=99cc0762a4dc",
       "type": "commercial_bank",
       "status": "ok",
       "fetched_at": "2026-09-29T03:55:39Z",
@@ -63,6 +64,7 @@ response is 15 sources, 43 currencies, ~587 quotes):
       "id": "mongolbank",
       "name": "Bank of Mongolia",
       "name_mn": "Монгол Банк",
+      "logo_url": "http://192.168.0.143:8000/static/logos/mongolbank.png?v=ada1dcb2791e",
       "type": "central_bank",
       "status": "ok",
       "fetched_at": "2026-09-29T03:55:45Z",
@@ -76,6 +78,7 @@ response is 15 sources, 43 currencies, ~587 quotes):
       "id": "sendmn",
       "name": "SendMN",
       "name_mn": "Сэнд Эм Эн ББСБ",
+      "logo_url": "http://192.168.0.143:8000/static/logos/sendmn.jpg?v=135034dbbb23",
       "type": "remittance",
       "status": "ok",
       "fetched_at": "2026-09-29T03:55:42Z",
@@ -161,8 +164,60 @@ institutions' own official names, so do not re-translate or "tidy"
 them (e.g. TransBank is `Тээвэр Хөгжлийн Банк` in Mongolian, not a
 phonetic `Транс Банк`).
 
-**10. Timestamps are UTC with a `Z` suffix.** Use an ISO8601 decoding
+**10. `logo_url` is an absolute URL, or `null`.** Load it with
+`AsyncImage`/`URLSession` and cache it hard: the URL embeds a content
+hash (`?v=`), so a changed logo arrives as a new URL and an unchanged
+one never needs revalidating. Images are PNG or JPEG (never SVG),
+mostly 512×512 squares (Bank of Mongolia 180, CK Bank 128). `null`
+means no logo of verified provenance exists (Naiman Sharga today) -
+show a neutral placeholder, and never derive one from the name. Treat
+the images as the institutions' trademarks: show them only next to that
+institution's own name and rates.
+
+**11. Frankfurter is an international reference, and how to use it
+for foreign↔foreign conversion.** `type: "international_aggregator"`,
+id `frankfurter`, 161 currencies including KZT, all with
+`channel: "reference"`, `side: "reference"` (no buy/sell). Like every
+quote, `rate` is MNT per `unit_basis` units of `currency`, so to
+convert between two foreign currencies go through the MNT prices:
+
+```swift
+// 250 000 KZT -> USD, using one source's reference rates
+let mntPerKZT = kztRate / kztBasis          // Decimal, e.g. 8.1477
+let mntPerUSD = usdRate / usdBasis          // Decimal, e.g. 3594.95
+let usd = 250_000 * mntPerKZT / mntPerUSD   // ≈ 566.6 -- round only for display
+```
+
+Use both rates from the **same source** so they come from the same
+snapshot. The values are rounded to ~5 significant digits by the source,
+so foreign↔foreign results are indicative to roughly 0.01-0.05 % -
+fine for a converter, not for settlement. They are central-bank
+reference figures with no spread: **do not present them as a rate a
+user can transact at**. When the user is actually exchanging cash, use
+a bank's `cash` quotes instead. It is refreshed twice a day and, as it
+reflects central banks that do not publish at weekends, a
+`published_at` up to ~4 days old is normal for it and still `ok`.
+
+**12. `type` is non-exhaustive.** Now one of `commercial_bank`,
+`central_bank`, `exchange_bureau`, `remittance`,
+`international_aggregator`. Decode unknown values instead of throwing.
+
+**13. Timestamps are UTC with a `Z` suffix.** Use an ISO8601 decoding
 strategy; `.iso8601` works for these.
+
+## OpenAPI (optional, recommended)
+
+The backend publishes its contract as OpenAPI 3.1: live at
+`GET /openapi.json`, and committed as `docs/openapi.json` in the backend
+repo. **The app does not need it to work** - it only ever decodes JSON.
+But you can generate the Swift models from it (e.g.
+[swift-openapi-generator](https://github.com/apple/swift-openapi-generator))
+instead of hand-writing DTOs, so a contract change becomes a compile
+error rather than a runtime decode failure. Regenerate when the backend
+bumps its version. In the schema every field is required; nullable ones
+(`logo_url`, `fetched_at`, `published_at`, `last_checked_at`) are
+`string | null` - a missing quote is absent from the `quotes` array, not
+a null field.
 
 ## Caching — please implement this
 

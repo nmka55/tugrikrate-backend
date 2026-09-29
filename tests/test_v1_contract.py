@@ -55,6 +55,7 @@ class TestEnvelope:
             "id",
             "name",
             "name_mn",
+            "logo_url",
             "type",
             "status",
             "fetched_at",
@@ -233,3 +234,20 @@ class TestSupportingEndpoints:
     def test_legacy_endpoints_are_gone(self, client, test_db):
         for path in ("/api/rates", "/api/rates/latest"):
             assert client.get(path).status_code == 404
+
+
+class TestInternationalSource:
+    def test_frankfurter_serves_reference_quotes_only(self, client, test_db):
+        seed(
+            test_db,
+            "frankfurter",
+            quotes=[Quote("KZT", "reference", "reference", Decimal("8.1477"))],
+        )
+        body = client.get("/v1/rates?source=frankfurter").json()
+        source = body["sources"][0]
+
+        assert source["type"] == "international_aggregator"
+        assert source["name_mn"] == "Франкфуртер"
+        assert [q["channel"] for q in source["quotes"]] == ["reference"]
+        assert [q["side"] for q in source["quotes"]] == ["reference"]
+        assert source["quotes"][0]["rate"] == "8.1477"

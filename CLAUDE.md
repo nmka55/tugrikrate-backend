@@ -109,11 +109,24 @@ Read `ARCHITECTURE.md` first — it carries the why behind all of this.
   (TransBank's Mongolian name is `Тээвэр Хөгжлийн Банк`, not a phonetic
   `Транс Банк`). Change one only with new evidence, in the registry,
   the test table and ARCHITECTURE.md together.
-- **Pending, blocked on network:** international sources (Frankfurter,
-  ExchangeRate-API) and source logos are designed but **not built** -
-  read ARCHITECTURE.md §6 before touching either; the decisions there
-  (reference channel only, no USD cross-rates, hard call-budget guard)
-  are settled.
+- **Frankfurter is source #16 and is not a bank.** It lives in
+  `app/crawlers/frankfurter.py` but is deliberately *not* in
+  `HTTP_CRAWLERS`, keeping `crawlers/__init__.py` upstream-identical.
+  Reference channel only; never derive a rate by crossing through USD;
+  use `/v2` (v1 has no MNT); one request per currency, bounded by
+  `DailyCallBudget` - the scheduler refuses to start a cadence that
+  exceeds `INTL_DAILY_CALL_LIMIT`. Rationale: ARCHITECTURE.md §5.
+- **ExchangeRate-API is rejected** (Terms forbid redistribution through
+  an API). Do not re-add it; any replacement source must allow
+  republishing.
+- **Logos are hosted copies with provenance.** Refresh with
+  `python -m scripts.fetch_logos`; never hot-link a bank. Naiman
+  Sharga intentionally has none (`tests/test_logos.py::NO_LOGO`).
+  Set `PUBLIC_BASE_URL` in production.
+- **`docs/openapi.json` is committed.** Changing any v1 model fails
+  `tests/test_openapi.py` until `python -m scripts.export_openapi` is
+  re-run and the diff reviewed. Keep `docs/mobile-integration-prompt.md`
+  in step.
 - **Line length is 79** (`pyproject.toml`), not black's default 88.
 - **`target-version` is pinned to `py313`** even though the Dockerfile
   runs 3.14. Deliberate, inherited from upstream: Black targeting

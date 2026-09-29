@@ -1,0 +1,832 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "TugrikRate Rates API",
+    "description": "Exchange rates for Mongolian tugrik (MNT), collected from 15 Mongolian banks and financial institutions.\n\n`GET /v1/rates` is the stable public contract. Rates are JSON **strings** so exact decimal precision survives the wire, and each quote states the channel and side the source actually publishes - nothing is copied between channels or inferred.",
+    "contact": {
+      "name": "Battseren Badral (upstream)",
+      "url": "https://github.com/btseee/mongolian-bank-exchange-rate"
+    },
+    "license": {
+      "name": "MIT",
+      "url": "https://opensource.org/licenses/MIT"
+    },
+    "version": "2.0.0"
+  },
+  "paths": {
+    "/api/health": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Health check",
+        "operationId": "health_api_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/info": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Service info",
+        "operationId": "info_api_info_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/rates": {
+      "get": {
+        "tags": [
+          "v1"
+        ],
+        "summary": "All sources, latest rates",
+        "description": "Every source's most recent rates.\n\nSupports `If-None-Match`: an app polling on an interval gets a bare\n304 when nothing has moved, which matters on a metered connection.",
+        "operationId": "get_rates_v1_rates_get",
+        "parameters": [
+          {
+            "name": "currency",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated ISO codes, e.g. USD,EUR",
+              "examples": [
+                "USD,EUR"
+              ],
+              "title": "Currency"
+            },
+            "description": "Comma-separated ISO codes, e.g. USD,EUR"
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated source ids",
+              "examples": [
+                "khanbank"
+              ],
+              "title": "Source"
+            },
+            "description": "Comma-separated source ids"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RatesResponse"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "Send back as If-None-Match.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Unchanged since the supplied ETag; no body."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sources": {
+      "get": {
+        "tags": [
+          "v1"
+        ],
+        "summary": "Source registry, with the evidence behind each mapping",
+        "description": "What each source publishes and why we believe it.\n\nThe `evidence` strings record how each channel/side label was\nconfirmed, so a future reader can re-check a claim rather than\ntrusting it.",
+        "operationId": "get_sources_v1_sources_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourcesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/rates/{source_id}/history": {
+      "get": {
+        "tags": [
+          "v1"
+        ],
+        "summary": "Snapshot history for one source",
+        "description": "Distinct published rate sets for one source, newest first.\n\nOne entry per actual change - repeated crawls that found the same\npayload do not create entries, they move `last_checked_at`.",
+        "operationId": "get_history_v1_rates__source_id__history_get",
+        "parameters": [
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Source Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown source id."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/crawl": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Crawl every source now",
+        "description": "Starts a crawl of all sources in the background (202 Accepted).\nPoll GET /api/admin/status for the outcome.",
+        "operationId": "start_crawl_api_admin_crawl_post",
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    },
+    "/api/admin/crawl/{source_id}": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Crawl one source now",
+        "description": "Crawls and persists one source synchronously.",
+        "operationId": "start_single_source_crawl_api_admin_crawl__source_id__post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SourceId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/status": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Last/current job state",
+        "operationId": "get_status_api_admin_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HistoryResponse": {
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "title": "Schema Version"
+          },
+          "source": {
+            "$ref": "#/components/schemas/HistorySourceOut"
+          },
+          "snapshots": {
+            "items": {
+              "$ref": "#/components/schemas/HistorySnapshotOut"
+            },
+            "type": "array",
+            "title": "Snapshots"
+          }
+        },
+        "type": "object",
+        "required": [
+          "schema_version",
+          "source",
+          "snapshots"
+        ],
+        "title": "HistoryResponse"
+      },
+      "HistorySnapshotOut": {
+        "properties": {
+          "fetched_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fetched At"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          },
+          "last_checked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Checked At"
+          },
+          "payload_hash": {
+            "type": "string",
+            "title": "Payload Hash"
+          },
+          "quotes": {
+            "items": {
+              "$ref": "#/components/schemas/QuoteOut"
+            },
+            "type": "array",
+            "title": "Quotes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fetched_at",
+          "published_at",
+          "last_checked_at",
+          "payload_hash",
+          "quotes"
+        ],
+        "title": "HistorySnapshotOut"
+      },
+      "HistorySourceOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "name_mn": {
+            "type": "string",
+            "title": "Name Mn"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "name_mn",
+          "type"
+        ],
+        "title": "HistorySourceOut"
+      },
+      "QuoteOut": {
+        "properties": {
+          "currency": {
+            "type": "string",
+            "title": "Currency",
+            "examples": [
+              "USD"
+            ]
+          },
+          "channel": {
+            "type": "string",
+            "title": "Channel",
+            "description": "cash | noncash | reference | unspecified. `unspecified` means the source publishes one rate pair without saying which channel it applies to - it is not a guess.",
+            "examples": [
+              "noncash"
+            ]
+          },
+          "side": {
+            "type": "string",
+            "title": "Side",
+            "description": "buy | sell | reference, always from the source's perspective: `buy` is what it pays you.",
+            "examples": [
+              "sell"
+            ]
+          },
+          "rate": {
+            "type": "string",
+            "title": "Rate",
+            "description": "Decimal string. MNT per `unit_basis` units.",
+            "examples": [
+              "3450.00"
+            ]
+          },
+          "unit_basis": {
+            "type": "string",
+            "title": "Unit Basis",
+            "description": "How many units of the currency `rate` prices.",
+            "examples": [
+              "1"
+            ]
+          },
+          "verified": {
+            "type": "boolean",
+            "title": "Verified",
+            "description": "False when the quoting unit could not be confirmed - treat the rate as indicative only.",
+            "examples": [
+              true
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "currency",
+          "channel",
+          "side",
+          "rate",
+          "unit_basis",
+          "verified"
+        ],
+        "title": "QuoteOut"
+      },
+      "RatesResponse": {
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "title": "Schema Version",
+            "description": "Contract version. Bumped on any breaking change.",
+            "examples": [
+              1
+            ]
+          },
+          "generated_at": {
+            "type": "string",
+            "title": "Generated At"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/SourceOut"
+            },
+            "type": "array",
+            "title": "Sources"
+          }
+        },
+        "type": "object",
+        "required": [
+          "schema_version",
+          "generated_at",
+          "sources"
+        ],
+        "title": "RatesResponse"
+      },
+      "SourceId": {
+        "type": "string",
+        "enum": [
+          "khanbank",
+          "golomtbank",
+          "xacbank",
+          "arigbank",
+          "statebank",
+          "mongolbank",
+          "capitronbank",
+          "naimansharga",
+          "sendmn",
+          "mbank",
+          "tdbm",
+          "bogdbank",
+          "ckbank",
+          "nibank",
+          "transbank",
+          "frankfurter"
+        ],
+        "title": "SourceId"
+      },
+      "SourceInfoOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "examples": [
+              "khanbank"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "name_mn": {
+            "type": "string",
+            "title": "Name Mn"
+          },
+          "name_evidence": {
+            "type": "string",
+            "title": "Name Evidence",
+            "description": "Where the two names came from (for re-checking)."
+          },
+          "logo_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logo Url"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "cadence": {
+            "type": "string",
+            "title": "Cadence",
+            "description": "fast | slow | daily",
+            "examples": [
+              "fast"
+            ]
+          },
+          "channels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Channels",
+            "examples": [
+              [
+                "cash",
+                "noncash"
+              ]
+            ]
+          },
+          "evidence": {
+            "type": "string",
+            "title": "Evidence",
+            "description": "How each channel/side label was confirmed."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "name_mn",
+          "name_evidence",
+          "logo_url",
+          "type",
+          "cadence",
+          "channels",
+          "evidence"
+        ],
+        "title": "SourceInfoOut"
+      },
+      "SourceOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "examples": [
+              "khanbank"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Official English name.",
+            "examples": [
+              "Khan Bank"
+            ]
+          },
+          "name_mn": {
+            "type": "string",
+            "title": "Name Mn",
+            "description": "Official Mongolian (Cyrillic) name.",
+            "examples": [
+              "Хаан Банк"
+            ]
+          },
+          "logo_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logo Url",
+            "description": "Absolute URL of this source's logo (PNG or JPEG, square where the source has an app icon). Null when no logo of verified provenance exists. The URL embeds a content hash, so it can be cached indefinitely.",
+            "examples": [
+              "https://api.example.com/static/logos/khanbank.jpg?v=ab12cd34ef56"
+            ]
+          },
+          "type": {
+            "type": "string",
+            "title": "Type",
+            "description": "commercial_bank | central_bank | exchange_bureau | remittance | international_aggregator. Treat as non-exhaustive.",
+            "examples": [
+              "commercial_bank"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "ok | stale | failing. A stale or failing source still returns its last good quotes.",
+            "examples": [
+              "ok"
+            ]
+          },
+          "fetched_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fetched At",
+            "description": "When this service retrieved these rates."
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At",
+            "description": "When the source says it published them. Null when the source does not say - never inferred from fetch time."
+          },
+          "last_checked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Checked At",
+            "description": "Most recent crawl that returned this same payload."
+          },
+          "quotes": {
+            "items": {
+              "$ref": "#/components/schemas/QuoteOut"
+            },
+            "type": "array",
+            "title": "Quotes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "name_mn",
+          "logo_url",
+          "type",
+          "status",
+          "fetched_at",
+          "published_at",
+          "last_checked_at",
+          "quotes"
+        ],
+        "title": "SourceOut"
+      },
+      "SourcesResponse": {
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "title": "Schema Version"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/SourceInfoOut"
+            },
+            "type": "array",
+            "title": "Sources"
+          }
+        },
+        "type": "object",
+        "required": [
+          "schema_version",
+          "sources"
+        ],
+        "title": "SourcesResponse"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    },
+    "securitySchemes": {
+      "APIKeyHeader": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Admin-Key"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "v1",
+      "description": "Stable public contract"
+    },
+    {
+      "name": "System",
+      "description": "Health and service info"
+    },
+    {
+      "name": "Admin",
+      "description": "On-demand crawls (requires X-Admin-Key)"
+    }
+  ]
+}
