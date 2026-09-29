@@ -24,8 +24,11 @@
   available through a history endpoint. New config: `FXRATESAPI_KEY`
   (secret; empty disables the source), `FXRATESAPI_URI`.
 - **`X-App-Key` app authentication** (`APP_API_KEYS`, comma list for
-  rotation, fail closed when empty). Optional: requests without it get
-  every unrestricted source exactly as before.
+  rotation). Optional: requests without it get every unrestricted
+  source exactly as before. With no keys set the server runs in
+  **development mode** and serves restricted sources to everyone (with
+  a startup warning); `REQUIRE_APP_KEY=true`, set in `render.yaml`,
+  refuses to start without keys so production cannot run open.
 - `restricted` on `/v1/sources`.
 - `logo_url` on every source in `GET /v1/rates` and `/v1/sources`
   (null for Naiman Sharga, whose logo provenance could not be

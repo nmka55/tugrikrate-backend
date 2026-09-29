@@ -70,14 +70,90 @@ class TestRestrictedSources:
         seed_fx(test_db, source_id="fxratesapi")
         assert self.ids(client, **{"X-App-Key": "guess"}) == {"frankfurter"}
 
-    def test_no_configured_app_keys_serves_it_to_nobody(
+    def test_development_mode_serves_it_without_a_key(
         self, client, test_db, monkeypatch
     ):
-        """Fail closed: an empty APP_API_KEYS must not mean 'open'."""
+        """Owner's decision: with no APP_API_KEYS (and REQUIRE_APP_KEY
+        off) the feed is usable before the app ships a key."""
         self.enable(monkeypatch, app_keys=())
         seed_fx(test_db, source_id="fxratesapi")
-        assert self.ids(client, **{"X-App-Key": ""}) == {"frankfurter"}
+        both = {"frankfurter", "fxratesapi"}
+        assert self.ids(client) == both
+        assert self.ids(client, **{"X-App-Key": "anything"}) == both
+        # Still never cacheable by a shared cache.
+        cache = client.get("/v1/fx").headers["cache-control"]
+        assert cache.startswith("private")
+
+    def test_required_but_unset_keys_serve_it_to_nobody(
+        self, client, test_db, monkeypatch
+    ):
+        """REQUIRE_APP_KEY with no keys is refused at startup; if that
+        state is reached anyway it must still mean closed, not open."""
+        from app.config import config
+
+        self.enable(monkeypatch, app_keys=())
+        monkeypatch.setattr(config, "REQUIRE_APP_KEY", True)
+        seed_fx(test_db, source_id="fxratesapi")
+        assert self.ids(client) == {"frankfurter"}
         assert self.ids(client, **{"X-App-Key": "anything"}) == {"frankfurter"}
+
+    def test_production_refuses_to_start_open(self, monkeypatch):
+        import importlib.util
+
+        import pytest
+
+        import app.config as cfg
+
+        monkeypatch.setenv("REQUIRE_APP_KEY", "true")
+        monkeypatch.setenv("APP_API_KEYS", "")
+        probe = importlib.util.spec_from_file_location(
+            "_config_probe", cfg.__file__
+        )
+        with pytest.raises(ValueError, match="REQUIRE_APP_KEY"):
+            probe.loader.exec_module(importlib.util.module_from_spec(probe))
+
+    def test_render_blueprint_enforces_the_key(self):
+        """Production is deployed from render.yaml; it must switch
+        development mode off."""
+        from pathlib import Path
+
+        blueprint = (Path(__file__).parent.parent / "render.yaml").read_text()
+        assert 'key: REQUIRE_APP_KEY\n        value: "true"' in blueprint
+
+    def test_development_mode_is_announced_at_startup(
+        self, client, monkeypatch
+    ):
+        # `client` has already patched out the DB and scheduler; start
+        # the app once more with the logger spied on.
+        from fastapi.testclient import TestClient
+
+        import app.api.api as api
+
+        warnings = []
+        monkeypatch.setattr(api.logger, "warning", warnings.append)
+        with TestClient(api.app):
+            pass
+        assert any("DEVELOPMENT MODE" in w for w in warnings)
+
+    def test_enforced_mode_starts_quietly(self, client, monkeypatch):
+        from fastapi.testclient import TestClient
+
+        import app.api.api as api
+        from app.config import config
+
+        monkeypatch.setattr(config, "APP_API_KEYS", ["k"])
+        warnings = []
+        monkeypatch.setattr(api.logger, "warning", warnings.append)
+        with TestClient(api.app):
+            pass
+        assert not any("DEVELOPMENT MODE" in w for w in warnings)
+
+    def test_setting_keys_leaves_development_mode(self, monkeypatch):
+        from app.api.dependencies import app_keys_enforced
+        from app.config import config
+
+        monkeypatch.setattr(config, "APP_API_KEYS", ["k"])
+        assert app_keys_enforced() is True
 
     def test_without_its_provider_key_it_is_not_listed(
         self, client, test_db, monkeypatch

@@ -206,6 +206,9 @@ Two endpoints supply the inputs:
 
   Without the key (or with a wrong one) `fxratesapi` is simply absent -
   not an error - so the app must work with whichever sources arrive.
+  **During development** the backend may run without app keys
+  configured, and then returns `fxratesapi` to every request; send the
+  header anyway, so nothing changes when production turns the check on.
   Its licence allows showing its rates only inside this app, for the
   user's personal reference: do not let users export or share its
   numbers, and do not send them to any other service. The two sources

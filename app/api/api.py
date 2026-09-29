@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.__version__ import __author__, __license__, __url__, __version__
+from app.api.dependencies import app_keys_enforced
 from app.api.routers import admin, system, v1
 from app.config import config
 from app.db.database import init_db
@@ -47,6 +48,13 @@ async def _self_ping_loop() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    if not app_keys_enforced():
+        logger.warning(
+            "DEVELOPMENT MODE: APP_API_KEYS is empty, so licence-restricted "
+            "sources (fxratesapi) are served on /v1/fx to ANY caller. Do "
+            "not expose this server publicly; production must set "
+            "APP_API_KEYS and REQUIRE_APP_KEY=true."
+        )
     # The scheduler runs in-process: a 15-minute cadence is well below
     # what an external HTTP trigger can hold to reliably. Set
     # SCHEDULER_ENABLED=false to drive crawls via /api/admin/crawl

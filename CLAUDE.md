@@ -135,8 +135,12 @@ Read `ARCHITECTURE.md` first — it carries the why behind all of this.
   republishing through an API.
 - **fxRatesAPI is source #17 and `restricted`** (licence: our app's
   users only; ARCHITECTURE.md §5). A `restricted` source is served on
-  `/v1/fx` only with a valid `X-App-Key` (`APP_API_KEYS`, fail closed
-  when empty), with `Cache-Control: private`, and **never** through
+  `/v1/fx` only with a valid `X-App-Key` (`APP_API_KEYS`) - except in
+  **development mode** (no keys set; owner's choice until production),
+  where it goes to everyone. Production must never run in it:
+  `REQUIRE_APP_KEY=true` (kept in `render.yaml`, pinned by a test)
+  refuses to start with no keys - do not remove it. Always
+  `Cache-Control: private`, and **never** through
   any history endpoint - not even for the app. Never expose it
   elsewhere, never add a keyless fallback, never put `FXRATESAPI_KEY`
   in a URL (it goes in `Authorization: Bearer`). A wrong key still

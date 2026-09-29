@@ -438,7 +438,9 @@ conditions found, and how each is now met:
    which is "transfer outside of your application". → The source is
    `restricted`: `/v1/fx` includes it only for a request with a valid
    `X-App-Key` (see "App authentication" below), otherwise it is simply
-   absent. Such responses are `Cache-Control: private` with
+   absent - **except in development mode** (no `APP_API_KEYS`), which
+   the owner chose for the pre-production period and which production
+   cannot run in (see below). Such responses are `Cache-Control: private` with
    `Vary: X-App-Key`, so no shared cache can hand them to a stranger.
 2. **No archive.** Prohibited Uses bars archiving/caching "within
    another web site" and redistribution "in any manner whatsoever". →
@@ -497,9 +499,11 @@ on docs; weigh accordingly.
    variable `FXRATESAPI_KEY`. The backend sends it only as
    `Authorization: Bearer`, never in a URL, so it cannot leak into
    request logs. Set it on the production host too.
-2. *Owner, to do:* set `APP_API_KEYS` (a long random string) on the
-   server and build the same value into the iOS app. **Until then
-   fxratesapi data is served to nobody** - fail closed by design.
+2. *Owner, before production:* set `APP_API_KEYS` (a long random
+   string) on the server and build the same value into the iOS app.
+   Until then the server runs in **development mode** and serves
+   fxratesapi to any caller (below); a production deploy from
+   `render.yaml` refuses to start without it.
 3. *Owner, recommended before launch:* email support@fxratesapi.com
    describing the use - rates fetched 4×/day by our backend, cached,
    shown only inside our iOS app for personal reference, no
@@ -515,9 +519,20 @@ that meets the licence without breaking anything that exists:
   Unrestricted data (the 15 banks, Frankfurter) stays public exactly as
   before, so an app build without the key keeps working. A missing or
   wrong key is not an error; restricted sources are just absent.
-- **Fail closed.** No `APP_API_KEYS` configured → restricted data goes
-  to nobody. Keys are compared in constant time
-  (`secrets.compare_digest`).
+- **Development mode (owner's decision, 2026-09-29).** With no
+  `APP_API_KEYS` configured, restricted sources are served to *every*
+  request, so the feed is usable before the app ships a key. This is
+  licence-safe only while the server is not publicly reachable, so:
+  - the server logs a `DEVELOPMENT MODE` warning at every startup;
+  - `REQUIRE_APP_KEY=true` makes it **refuse to start** with no keys,
+    and `render.yaml` (the production blueprint) sets it - so a Render
+    deploy cannot run open by accident
+    (`tests/test_fx.py::test_render_blueprint_enforces_the_key`);
+  - responses with restricted data stay `Cache-Control: private`, and
+    history stays 404, in every mode.
+  This replaced the first build's "no keys → served to nobody", which
+  blocked using the feed during development.
+- **Keys are compared in constant time** (`secrets.compare_digest`).
 - **Rotatable.** `APP_API_KEYS` is a list: add the new key, ship an app
   version that sends it, remove the old key once old versions are gone.
 
@@ -698,15 +713,25 @@ read; nothing above was assumed.
       (autouse fixture), and a `config` reload hazard in one test fixed.
 - [x] 364 tests; isort/black/ruff clean.
 
+**Later the same night - development mode.**
+
+- [x] Owner asked to use both foreign sources without setting up
+      `APP_API_KEYS` until production. No keys → restricted sources
+      served to all, with a startup warning; `REQUIRE_APP_KEY=true`
+      (set in `render.yaml`) refuses to start open. Verified live:
+      plain `/v1/fx` returns both sources; prod-style start with no
+      keys fails with a clear error.
+- [x] 370 tests; isort/black/ruff clean.
+
 **Not done / known gaps**
 
 - [ ] **The iOS app is not connected yet.** No client exists.
 - [ ] **No production deployment.** Local SQLite only. A real
       deployment needs Postgres (free tiers have no persistent disk)
       and a decision on the Playwright worker split.
-- [ ] **`APP_API_KEYS` not set yet**, so fxRatesAPI data is currently
-      served to nobody (fail closed). Owner sets it on the server and
-      in the app.
+- [ ] **`APP_API_KEYS` not set yet**: the server runs in development
+      mode, serving fxRatesAPI to any caller. Must be set (server and
+      app) before production; the Render blueprint enforces it.
 - [ ] **fxRatesAPI written confirmation** of the use, recommended
       before launch (§5, condition 4).
 - [ ] **App authentication is a shared secret, not App Attest** (§5).

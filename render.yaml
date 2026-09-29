@@ -58,6 +58,18 @@ services:
       # consumes the monthly instance-hour quota.
       - key: SELF_PING_URL
         sync: false
+      # fxRatesAPI's licence allows its data only inside our own app.
+      # REQUIRE_APP_KEY makes the server refuse to start while
+      # APP_API_KEYS is empty, so production can never serve it openly
+      # (the development default does). Set APP_API_KEYS in the
+      # dashboard to the value built into the iOS app, and
+      # FXRATESAPI_KEY to the provider key.
+      - key: REQUIRE_APP_KEY
+        value: "true"
+      - key: APP_API_KEYS
+        sync: false
+      - key: FXRATESAPI_KEY
+        sync: false
 
 # Splitting the five Playwright sources into their own process keeps
 # headless Chromium out of the process that serves requests, so an OOM
