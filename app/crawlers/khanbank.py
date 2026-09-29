@@ -11,7 +11,7 @@ class KhanBank(BaseCrawler):
     def crawl(self) -> Dict[str, CurrencyDetail]:
         resp = self.get(f"{config.KHANBANK_URI}?date={self.date}")
         resp.raise_for_status()
-        return self._parse(resp.json())
+        return self._parse(self.json_exact(resp))
 
     def _parse(self, data: list) -> Dict[str, CurrencyDetail]:
         rates = {}

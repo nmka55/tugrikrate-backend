@@ -12,7 +12,7 @@ class GolomtBank(BaseCrawler):
         date_fmt = self.date.replace("-", "")
         resp = self.get(f"{config.GOLOMT_URI}?date={date_fmt}")
         resp.raise_for_status()
-        return self._parse(resp.json().get("result", {}))
+        return self._parse(self.json_exact(resp).get("result", {}))
 
     def _parse(self, data: dict) -> Dict[str, CurrencyDetail]:
         rates = {}

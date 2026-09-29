@@ -1,96 +1,46 @@
-"""Admin endpoints: on-demand crawl/backfill for Render's HTTP-only free
-tier, where no always-on worker process is available to run a scheduler.
-All routes require the X-Admin-Key header (see app.api.dependencies)."""
+"""Admin endpoints: on-demand crawls.
 
-from typing import Optional
+Only needed when the in-process scheduler is disabled and something
+external drives crawls over HTTP, or to force a refresh while
+debugging. All routes require X-Admin-Key.
+"""
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from pydantic import BaseModel, Field
 
-from app.api.dependencies import BankName, require_admin_key
+from app.api.dependencies import SourceId, require_admin_key
 from app.services import admin_jobs
-from scripts.backfill import parse_date_args
 
 router = APIRouter(
     prefix="/api/admin",
-    tags=["Админ"],
+    tags=["Admin"],
     dependencies=[Depends(require_admin_key)],
 )
 
-_DATE_PATTERN = r"^\d{4}-\d{2}-\d{2}$"
 
-
-class BackfillRequest(BaseModel):
-    start: Optional[str] = Field(None, pattern=_DATE_PATTERN)
-    end: Optional[str] = Field(None, pattern=_DATE_PATTERN)
-
-
-@router.post("/crawl", status_code=202, summary="Өнөөдрийн ханш татаж эхлэх")
+@router.post("/crawl", status_code=202, summary="Crawl every source now")
 def start_crawl(background_tasks: BackgroundTasks):
-    """
-    Өнөөдрийн өдрөөр бүх 15 банкны ханшийг татаж эхлүүлнэ (background дээр).
-
-    Хариу нэн даруй `202 Accepted`-ээр буцна - гүйцэтгэл дуусаагүй байж
-    болно. Явцыг шалгахын тулд `GET /api/admin/status` ашиглана уу.
-    """
+    """Starts a crawl of all sources in the background (202 Accepted).
+    Poll GET /api/admin/status for the outcome."""
     if not admin_jobs.try_start("crawl"):
-        raise HTTPException(409, "Өөр job аль хэдийн ажиллаж байна")
+        raise HTTPException(409, "Another job is already running")
     background_tasks.add_task(admin_jobs.run_crawl_job)
     return {"status": "started", "job_type": "crawl"}
 
 
-@router.post("/crawl/{bank_name}", summary="Ганц банкны ханш нэн даруй татах")
-def start_single_bank_crawl(bank_name: BankName):
-    """
-    Ганц банкны өнөөдрийн ханшийг синхроноор (хүлээж) татаж, шууд хадгална.
+@router.post("/crawl/{source_id}", summary="Crawl one source now")
+def start_single_source_crawl(source_id: SourceId):
+    """Crawls and persists one source synchronously."""
+    if not admin_jobs.try_start(f"crawl:{source_id.value}"):
+        raise HTTPException(409, "Another job is already running")
 
-    Нэг банкны ханшийг гараар шинэчлэх, эсвэл асуудлыг оношлоход ашиглана.
-    """
-    if not admin_jobs.try_start(f"crawl:{bank_name.value}"):
-        raise HTTPException(409, "Өөр job аль хэдийн ажиллаж байна")
-
-    rates = admin_jobs.run_single_bank_job(bank_name.value)
-    if not rates:
+    result = admin_jobs.run_single_source_job(source_id.value)
+    if not result.get("ok"):
         raise HTTPException(
-            502, f"'{bank_name.value}' банкны ханш татахад алдаа гарлаа"
+            502, f"{source_id.value} crawl failed: {result.get('error')}"
         )
-    return {"bank_name": bank_name.value, "rates": rates}
+    return result
 
 
-@router.post("/backfill", status_code=202, summary="Түүхэн ханш татаж эхлэх")
-def start_backfill(
-    request: BackfillRequest, background_tasks: BackgroundTasks
-):
-    """
-    Өгөгдсөн огнооны хооронд (эсвэл 2026-01-01-ээс өнөөдөр хүртэл,
-    анхдагчаар) өдөр бүрийн ханшийг дараалан татаж эхлүүлнэ (background дээр).
-
-    Банкны сайтуудыг бага багаар дуудахын тулд өдөр бүрийн хооронд
-    `BACKFILL_DELAY_SECONDS` (анхдагч 2 сек) азнаа хүлээнэ.
-    """
-    if request.end is not None and request.start is None:
-        raise HTTPException(
-            400, "'end' огноог заахын тулд 'start' огноог зааx шаардлагатай"
-        )
-    args = [v for v in (request.start, request.end) if v is not None]
-    try:
-        start, end = parse_date_args(args)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc))
-
-    if not admin_jobs.try_start("backfill"):
-        raise HTTPException(409, "Өөр job аль хэдийн ажиллаж байна")
-
-    background_tasks.add_task(admin_jobs.run_backfill_job, start, end)
-    return {
-        "status": "started",
-        "job_type": "backfill",
-        "start": start.isoformat(),
-        "end": end.isoformat(),
-    }
-
-
-@router.get("/status", summary="Job-ын явцыг шалгах")
+@router.get("/status", summary="Last/current job state")
 def get_status():
-    """Одоо ажиллаж буй (эсвэл сүүлд дууссан) crawl/backfill job-ын төлөв."""
     return admin_jobs.get_status()

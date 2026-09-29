@@ -1,42 +1,32 @@
-"""General/system endpoints: health check and API info."""
+"""Health check and service info."""
 
 from fastapi import APIRouter
 
-from app.__version__ import __donation__, __url__, __version__
-from app.api.dependencies import BANKS
+from app.__version__ import __url__, __version__
+from app.api.dependencies import SOURCE_IDS
 
-router = APIRouter(prefix="/api", tags=["Ерөнхий"])
+router = APIRouter(prefix="/api", tags=["System"])
 
 
 @router.get("/health", summary="Health check")
 def health():
-    """API health check - monitoring-д ашиглана."""
     return {"status": "healthy", "version": __version__}
 
 
-@router.get("/info", summary="API-н ерөнхий мэдээлэл")
+@router.get("/info", summary="Service info")
 def info():
-    """API-н ерөнхий мэдээлэл, дэмждэг банкууд, endpoints."""
     return {
-        "name": "Монголын Банкуудын Валютын Ханш API",
+        "name": "TugrikRate Rates API",
         "version": __version__,
+        "schema_version": 1,
         "documentation": "/",
-        "github": __url__,
-        "donation": __donation__,
-        "supported_banks": BANKS,
+        "upstream": __url__,
+        "sources": SOURCE_IDS,
         "endpoints": {
-            "/api/rates": "Бүх ханш (pagination-тай)",
-            "/api/rates/latest": "Банк бүрийн хамгийн сүүлийн ханш",
-            "/api/rates/bank/{bank_name}": "Тодорхой банкны ханш",
-            "/api/rates/date/{date}": "Тодорхой өдрийн бүх банкны ханш",
-            "/api/rates/bank/{bank_name}/date/{date}": "Банк + өдрөөр ханш",
-            "/api/health": "API health check",
-            "/api/admin/crawl": (
-                "Өнөөдрийн ханш татаж эхлэх (admin key шаардана)"
-            ),
-            "/api/admin/backfill": (
-                "Түүхэн ханш татаж эхлэх (admin key шаардана)"
-            ),
+            "/v1/rates": "Latest rates from every source",
+            "/v1/sources": "Source registry and channel evidence",
+            "/v1/rates/{source_id}/history": "Snapshot history",
+            "/api/health": "Health check",
+            "/api/admin/crawl": "Trigger a crawl (admin key required)",
         },
-        "example_currencies": ["usd", "eur", "cny", "rub", "jpy"],
     }

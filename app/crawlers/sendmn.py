@@ -1,3 +1,9 @@
+"""SendMN remittance rates.
+
+One buy/sell pair per currency, no channel stated. Upstream copied it
+into both channels; reported here once as channel="unspecified".
+"""
+
 from typing import Dict
 
 from app.config import config
@@ -13,7 +19,7 @@ class SendMN(BaseCrawler):
         resp = self.get(config.SENDMN_FIRESTORE_URL)
         resp.raise_for_status()
 
-        data = resp.json()
+        data = self.json_exact(resp)
         values = (
             data.get("fields", {})
             .get("data", {})
@@ -40,10 +46,5 @@ class SendMN(BaseCrawler):
                 continue
             buy = self.parse_float(fields.get("buy", {}).get("stringValue"))
             sell = self.parse_float(fields.get("sell", {}).get("stringValue"))
-            rates[code] = self.make_rate(
-                cash_buy=buy,
-                cash_sell=sell,
-                noncash_buy=buy,
-                noncash_sell=sell,
-            )
+            rates[code] = self.make_rate(cash_buy=buy, cash_sell=sell)
         return rates

@@ -2,6 +2,88 @@
 
 # Өөрчлөлтийн Түүх
 
+## [2.0.0] - 2026-09-29
+
+Fork of [btseee/mongolian-bank-exchange-rate](https://github.com/btseee/mongolian-bank-exchange-rate)
+(MIT, Battseren Badral) into the TugrikRate rates backend. Breaking:
+the entire public API is replaced. Entries below this one are the
+upstream project's history, in Mongolian.
+
+### Data correctness
+
+Four live labelling bugs, found by inspecting bank payloads directly:
+
+- **Capitron Bank** returns three rows per currency keyed by
+  `rtypecode` (1 reference, 2 cash, 3 non-cash). The old loop wrote
+  `rates[code]` for each, so the last row won and was copied into both
+  channels - publishing the non-cash rate as the cash rate and
+  discarding the real cash rate. Now mapped by rate type.
+- **Trans Bank** labels sides from the customer's perspective: USD cash
+  reads `BUY_RATE` 3617 / `SELL_RATE` 3587, the reverse of every other
+  source. Taken literally it made Trans Bank look like the best buy
+  rate in the country. Now normalised to the bank's perspective.
+- **Bank of Mongolia** publishes one official reference rate per
+  currency; it was duplicated into `noncash.buy` and `noncash.sell`,
+  inventing a zero-width spread. Now `channel: "reference"`.
+- **M Bank, SendMN, Naiman Sharga** publish a single unlabelled pair
+  that was copied into both channels. Now reported once as
+  `channel: "unspecified"`.
+
+### Reliability
+
+- **Khan Bank was failing entirely** with an SSL handshake error. Its
+  server only offers `AES256-SHA256`, which OpenSSL 3.x rejects at the
+  default security level. Fixed with a per-session cipher setting;
+  certificate verification is unchanged.
+- **Naiman Sharga** publishes with 2-3 day gaps, which the old
+  single-day fallback could not cover, so the source vanished from the
+  feed. Now walks back `SOURCE_LOOKBACK_DAYS` and reports the date it
+  actually landed on via `published_at`.
+
+### Added
+
+- `rate_snapshots`: immutable history, one row per distinct payload
+  hash. Unchanged crawls bump `last_checked_at` instead of inserting.
+- Crawls every 15 min 08:00-20:00 Asia/Ulaanbaatar, hourly outside,
+  with random jitter. Playwright sources on a configurable multiple.
+- `GET /v1/rates` - the stable contract. Rates as decimal strings,
+  per-quote `channel`/`side`/`unit_basis`/`verified`, per-source
+  `status` of ok/stale/failing, ETag/304 support.
+- `GET /v1/sources` and `GET /v1/rates/{id}/history`.
+- `app/sources/registry.py`, recording what each source publishes and
+  the evidence behind every claim.
+- `scripts/probe_units.py`, which re-derives each source's unit basis
+  from live data. Every fiat currency confirmed at basis 1 across all
+  sources; precious metals and KPW ship `verified: false`.
+- `scripts/migrate_v1.py`.
+- `CRAWL_GROUP` (`all`/`fast`/`slow`) and `scripts/worker.py`, so the
+  five Playwright sources can run in their own process. The groups own
+  disjoint sources and share only the database, so they need no
+  coordination. `docker compose up` runs the split by default.
+
+### Changed
+
+- Rates are exact `Decimal` end to end, stored and served as strings.
+  `parse_float` no longer returns a float (the name is retained so
+  upstream crawler fixes keep merging cleanly).
+- Locale-independent number parsing; malformed grouping such as
+  `"3450.50.50"` now reports missing instead of silently becoming
+  34,505,050.
+- Per-source crawl isolation: own session, own try/except. A failure
+  never touches the last good snapshot.
+- `schedule` replaced by APScheduler (timezone support and jitter).
+
+### Removed
+
+- `GET /api/rates/*` and the `currency_rates` one-row-per-day table.
+  The table is left in place but unused; its rows carry the labelling
+  errors above and are deliberately not migrated.
+- Backfill: banks do not serve historical intraday rates, so there is
+  nothing to backfill under snapshot semantics.
+- The GitHub Actions scheduled-crawl workflow, redundant now that the
+  scheduler runs in-process.
+
+
 ## [v1.1.0] - 2026-07-30
 
 Heroku-г бүрмөсөн хасаж, Render.com-ийн free Docker web service рүү шилжсэн том refactor. **API restructure нь breaking change** - өмнөх unprefixed зам (`/rates`, `/health`) ашиглаж байсан клиентүүд `/api/` prefix рүү шилжих шаардлагатай.

@@ -1,19 +1,32 @@
-import datetime
+"""Crawler interchange types.
+
+This is the shape every crawler still returns, kept identical to
+upstream so its parser fixes merge cleanly. It is *not* the public
+contract: app/sources/adapter.py converts these into `Quote` objects
+using each source's registry entry, dropping the channels a source does
+not genuinely publish.
+
+The one change from upstream is `Decimal` in place of `float`. Pydantic
+would otherwise coerce an exact Decimal straight back into a binary
+float and undo the whole point of the new parser.
+"""
+
+from decimal import Decimal
 from typing import Dict, Optional
 
 from pydantic import BaseModel, Field
 
 
 class Rate(BaseModel):
-    buy: Optional[float] = Field(
+    buy: Optional[Decimal] = Field(
         default=None,
         description="Авах ханш",
-        examples=[3430.5],
+        examples=["3430.50"],
     )
-    sell: Optional[float] = Field(
+    sell: Optional[Decimal] = Field(
         default=None,
         description="Зарах ханш",
-        examples=[3450.0],
+        examples=["3450.00"],
     )
 
 
@@ -21,64 +34,11 @@ class CurrencyDetail(BaseModel):
     cash: Rate = Field(
         default_factory=Rate,
         description="Бэлэн ханш",
-        examples=[{"buy": 3430.5, "sell": 3450.0}],
     )
     noncash: Rate = Field(
         default_factory=Rate,
         description="Бэлэн бус ханш",
-        examples=[{"buy": 3435.0, "sell": 3445.0}],
     )
 
 
-class ExchangeRate(BaseModel):
-    date: str = Field(
-        description="Өдрийн ханш (YYYY-MM-DD)",
-        examples=["2024-01-15"],
-    )
-    bank: str = Field(
-        description="Банкны нэр",
-        examples=["KhanBank"],
-    )
-    rates: Dict[str, CurrencyDetail] = Field(
-        description="Валютын кодоор ангилагдсан ханш",
-        examples=[
-            {
-                "usd": {
-                    "cash": {"buy": 3430.5, "sell": 3450.0},
-                    "noncash": {"buy": 3435.0, "sell": 3445.0},
-                }
-            }
-        ],
-    )
-
-
-class CurrencyRateResponse(BaseModel):
-    id: int = Field(
-        description="Ханшийн Id",
-        examples=[1],
-    )
-    bank_name: str = Field(
-        description="Банкны нэр",
-        examples=["KhanBank"],
-    )
-    date: datetime.date = Field(
-        description="Өдрийн ханш (YYYY-MM-DD)",
-        examples=["2024-01-15"],
-    )
-    rates: Dict[str, CurrencyDetail] = Field(
-        description="Валютын кодоор ангилагдсан ханш",
-        examples=[
-            {
-                "usd": {
-                    "cash": {"buy": 3430.5, "sell": 3450.0},
-                    "noncash": {"buy": 3435.0, "sell": 3445.0},
-                }
-            }
-        ],
-    )
-    timestamp: datetime.datetime = Field(
-        description="Хэзээ ханш бүртгэгдсэн",
-        examples=["2024-01-15T10:30:00Z"],
-    )
-
-    model_config = {"from_attributes": True}
+CurrencyRates = Dict[str, CurrencyDetail]

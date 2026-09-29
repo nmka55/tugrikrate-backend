@@ -35,7 +35,7 @@ class ArigBank(BaseCrawler):
         )
         resp.raise_for_status()
 
-        token = (resp.json().get("token") or "").strip()
+        token = (self.json_exact(resp).get("token") or "").strip()
         if not token:
             logger.warning("ArigBank: signIn did not return a token")
         return token
@@ -52,12 +52,12 @@ class ArigBank(BaseCrawler):
         )
         if resp.status_code == 401:
             try:
-                return resp.json()
+                return self.json_exact(resp)
             except ValueError:
                 return {"status": 401, "message": resp.text}
 
         resp.raise_for_status()
-        return resp.json()
+        return self.json_exact(resp)
 
     def _rates_from_payload(self, data: dict) -> Dict[str, CurrencyDetail]:
         if not data.get("data") and data.get("message"):

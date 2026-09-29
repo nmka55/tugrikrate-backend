@@ -1,3 +1,11 @@
+"""M Bank.
+
+getCurrencyList returns a single buy_rate/sale_rate pair per currency
+with no channel field. Upstream copied that pair into both cash and
+non-cash; it is written once here and app/sources/registry.py reports
+it as channel="unspecified".
+"""
+
 from typing import Dict
 
 from app.config import config
@@ -35,7 +43,8 @@ class MBank(BaseCrawler):
             timeout=self.timeout,
         )
         resp.raise_for_status()
-        return self._parse(resp.json())
+        self.record_payload(resp.content)
+        return self._parse(self.json_exact(resp))
 
     def _parse(self, data: dict) -> Dict[str, CurrencyDetail]:
         rates = {}
@@ -46,5 +55,5 @@ class MBank(BaseCrawler):
             if code:
                 buy = self.parse_float(item.get("buy_rate"))
                 sell = self.parse_float(item.get("sale_rate"))
-                rates[code] = self.make_rate(buy, sell, buy, sell)
+                rates[code] = self.make_rate(buy, sell)
         return rates

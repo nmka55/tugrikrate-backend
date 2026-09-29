@@ -1,5 +1,6 @@
 """TDBM bank crawler using Playwright for JavaScript rendering."""
 
+import json
 from datetime import date, datetime, timedelta
 from typing import Dict
 
@@ -74,16 +75,22 @@ class TDBM(PlaywrightCrawler):
 
     def _parse_table(self, page) -> Dict[str, CurrencyDetail]:
         rates = {}
+        captured = []
         for row in page.locator("table.table-hover tbody tr").all():
-            cells = row.locator("td").all()
-            rate = self._parse_cells([cell.inner_text() for cell in cells])
+            cells = [c.inner_text() for c in row.locator("td").all()]
+            rate = self._parse_cells(cells)
             if rate:
                 code, detail = rate
                 rates[code] = detail
+                captured.append(cells)
+        # Hash the rate rows only; the surrounding page carries session
+        # and analytics state that changes on every render.
+        self.record_payload(json.dumps(captured, ensure_ascii=False))
         return rates
 
     def _parse_html_table(self, html_text: str) -> Dict[str, CurrencyDetail]:
         rates = {}
+        captured = []
         root = html.fromstring(html_text)
         rows = root.xpath("//table[contains(@class, 'table-hover')]//tbody/tr")
         for row in rows:
@@ -92,6 +99,8 @@ class TDBM(PlaywrightCrawler):
             if rate:
                 code, detail = rate
                 rates[code] = detail
+                captured.append(cells)
+        self.record_payload(json.dumps(captured, ensure_ascii=False))
         return rates
 
     def _parse_cells(self, cells: list[str]):

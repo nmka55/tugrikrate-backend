@@ -4,36 +4,108 @@ Guidance for Claude Code (or any agent) working in this repo.
 
 ## What this is
 
-FastAPI service that crawls exchange rates from 15 Mongolian banks, stores them, and serves
-them over a REST API. Deployed as a Docker web service on Render's free tier.
+The rates backend for TugrikRate, an iOS MNT currency converter. It
+crawls 15 Mongolian banks, stores immutable snapshots, and serves one
+stable contract at `GET /v1/rates`. The iOS app is the only consumer.
+
+Forked from MIT-licensed
+[btseee/mongolian-bank-exchange-rate](https://github.com/btseee/mongolian-bank-exchange-rate)
+(remote: `upstream`, no `origin`).
+
+## The three invariants
+
+Most of this codebase exists to protect these. Breaking one is a
+correctness bug, not a style question.
+
+1. **Exactness.** Rates never touch binary floating point. Crawlers
+   decode with `json_exact` (`parse_float=Decimal`), parse with
+   `app/utils/decimals.parse_decimal`, store as decimal *strings*, and
+   serve as JSON strings. If you find yourself writing `float(...)` on
+   a rate, stop.
+2. **Only real channels.** A quote's `channel`/`side` must be something
+   the source actually publishes. Never copy a value between channels,
+   never fall back from one to another, never infer a channel from what
+   a bank "probably" means. If a source does not say, the channel is
+   `unspecified` and that is the honest answer.
+3. **Missing is missing.** `None`, `""`, `"-"`, `0` and friends mean the
+   source does not publish that number. They never become a value, and
+   a missing quote is absent from the response rather than null.
 
 ## Architecture
 
-- `app/crawlers/` — one class per bank, extends `BaseCrawler` (plain `requests`, session with
-  retry/backoff) or `PlaywrightCrawler` (headless Chromium, for JS-rendered sites). Registered
-  in `app/crawlers/__init__.py` under `HTTP_CRAWLERS`/`PLAYWRIGHT_CRAWLERS` — that grouping
-  controls which worker pool and concurrency limit a crawler runs under, so misclassifying a
-  crawler (e.g. a `requests`-based one under `PLAYWRIGHT_CRAWLERS`) silently throttles it.
-- `app/services/scraper.py` — runs crawlers in parallel per group, persists results, returns a
-  `{"succeeded", "failed", "failed_banks"}` summary. `app/services/admin_jobs.py` — in-process
-  `threading.Lock` + state dict backing the admin endpoints; only correct for a single Uvicorn
-  process (no `--workers` flag — check `Dockerfile`'s `CMD` before changing that).
-- `app/api/` — `api.py` wires the FastAPI app (middleware, lifespan) only; handlers live in
-  `app/api/routers/` (`system`, `rates`, `admin`). Shared enums/deps in `app/api/dependencies.py`.
-  Swagger UI is mounted at `/` (`docs_url="/"`); every real endpoint is under `/api/`.
-- `app/db/repository.py` — `save_rates()` is a dialect-dispatched atomic upsert
-  (`postgresql.insert`/`sqlite.insert` + `on_conflict_do_update`) keyed on the
-  `(bank_name, date)` unique constraint in `app/models/currency.py`. Don't revert this to
-  check-then-act — it exists specifically to make concurrent crawls (scheduled + admin-triggered)
-  race-safe.
-- `scripts/backfill.py` / `scripts/cron.py` — CLI entry points, also reused directly by
-  `app/services/admin_jobs.py` for the HTTP-triggered equivalents (Render's free tier has no
-  worker/cron process type, only `web`).
+- `app/crawlers/` — one class per bank, from upstream. **Keep these as
+  close to upstream as possible** so its "the bank renamed a JSON key"
+  fixes cherry-pick cleanly. They still return upstream's fixed
+  `{cash:{buy,sell}, noncash:{buy,sell}}` shape.
+- `app/sources/registry.py` — what each source *actually* publishes:
+  channels, sides, cadence, volatile payload keys, and the **evidence**
+  for each claim. Upstream never touches this file, so it never
+  conflicts. This is the single source of truth for the feed's labels.
+- `app/sources/adapter.py` — reads only the cells a source's registry
+  entry declares real and emits `Quote` objects. This is where
+  invariant 2 is enforced.
+- `app/sources/payload.py` — canonical payload bytes and the hash that
+  decides whether a snapshot is written.
+- `app/services/collector.py` — per-source crawl with its own session
+  and its own try/except. `app/services/scheduler.py` — APScheduler
+  cron triggers. `app/services/freshness.py` — cadence and the
+  ok/stale/failing rules, shared by both so they cannot drift.
+- `app/db/snapshots.py` — insert-on-change, bump-on-no-change.
+- `app/api/routers/v1.py` — the public contract. Treat it as frozen;
+  `tests/test_v1_contract.py` asserts the wire format key by key.
+
+## Gotchas
+
+- **`BaseCrawler.parse_float` returns `Decimal`.** The name is kept
+  deliberately: all 15 crawlers call it, and identical call sites are
+  what make upstream merges painless. Don't "fix" the name.
+- **Never hash a raw HTTP body.** Rendered pages carry build ids and
+  analytics that change every load; Capitron ships a growing
+  `histories` array; SendMN a `trend` field. Use
+  `payload_hash(raw, spec.volatile_keys)`. Playwright crawlers must
+  `record_payload()` the extracted rows, never the page.
+- **Don't add a channel by reading a field name.** Four live
+  data-correctness bugs were found by checking payloads instead:
+  Capitron's three `rtypecode` rows collapsing to one (publishing its
+  non-cash rate as cash), TransBank quoting sides from the customer's
+  perspective (its `BUY_RATE` is a sell), the Bank of Mongolia
+  reference duplicated into a fake spread, and three sources' cash
+  copied into non-cash. Each is documented in the registry entry.
+- **`published_at` is only ever what the source states.** Several
+  crawlers fall back to an earlier date when today is unpublished;
+  that fallback must be reflected in `published_date` so the feed can
+  report it as stale rather than passing it off as current.
+- **Unit basis is evidence-based.** Every fiat currency is confirmed at
+  basis 1 across all sources (`scripts/probe_units.py`). Anything that
+  cannot be confirmed ships `verified: false`. Do not widen
+  `UNVERIFIED_BASIS_CURRENCIES` down to a guess, or narrow it without
+  re-running the probe.
+- **Line length is 79** (`pyproject.toml`), not black's default 88.
+- **`target-version` is pinned to `py313`** even though the Dockerfile
+  runs 3.14. Deliberate, inherited from upstream: Black targeting
+  `py314` rewrites `except (A, B):` into 3.14-only PEP 758 syntax.
+  Don't bump it without re-checking that.
+- **No Alembic.** `init_db()` is idempotent; `scripts/migrate_v1.py`
+  handles the one-time move off the old `currency_rates` table, which
+  is left in place and unused.
+- **In-process state.** The rate limiter, the admin job lock and the
+  scheduler all assume a single Uvicorn process (no `--workers`). Two
+  replicas of the *same* `CRAWL_GROUP` would double every crawl. The
+  supported way to run more than one process is `CRAWL_GROUP=fast` on
+  the web service plus `CRAWL_GROUP=slow` on a worker: disjoint source
+  sets, so no coordination is needed. Anything that changes which
+  process owns which source must keep that partition exact - see
+  `tests/test_scheduler.py::TestSourceGroups`.
+- **Memory.** Upstream hit repeated OOM kills on 512MB from one
+  Chromium alongside the HTTP pool. `PLAYWRIGHT_MAX_WORKERS` caps any
+  group containing a Playwright source.
+- Dependencies are exact-pinned (`==`). Bump deliberately and re-run
+  the full check sequence.
 
 ## Local dev
 
 ```bash
-python -m venv .venv && .venv\Scripts\activate      # Linux/macOS: source .venv/bin/activate
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python -m playwright install chromium
 
@@ -42,48 +114,17 @@ ruff check app tests scripts main.py
 pytest
 ```
 
-## Conventions and gotchas
+CI enforces all four. Run them before committing.
 
-- **Line length is 79** (`pyproject.toml`), not black's default 88. Wrap accordingly.
-- `[tool.black]`/`[tool.ruff]` `target-version` is pinned to **`py313`**, even though the
-  Dockerfile/`.python-version`/CI actually run **Python 3.14**. This is deliberate: Black 26.5.1
-  targeting `py314` rewrites `except (A, B):` into the new unparenthesized PEP 758 syntax, which
-  is 3.14-only grammar sugar we don't want forced onto every except clause. Don't "fix" this by
-  bumping target-version back to py314 without re-checking that bug is gone.
-- No Alembic. Schema changes go through `app/db/database.py`'s idempotent
-  `CREATE UNIQUE INDEX IF NOT EXISTS` self-heal on startup — single table, hobby scale, not
-  worth a migration framework yet.
-- No task queue/Redis. Admin job concurrency is a single in-process lock; don't add
-  multi-worker/multi-replica support without redesigning that first.
-- All dependencies are exact-pinned (`==`) in `requirements.txt`, not floor-pinned. Bump
-  deliberately, and re-run the full local check sequence above after any bump — pytest 8→9 and
-  similar majors have broken things silently before.
-- Admin endpoints (`/api/admin/*`) require `X-Admin-Key` header, checked against
-  `ADMIN_API_KEY` (empty means the feature is off, returns 503 — never "open").
-- `render.yaml` deliberately omits `DATABASE_URL` — Render's free tier has no persistent disk,
-  so the SQLite default is ephemeral there; a real deployment needs an external Postgres
-  connection string set manually in the dashboard.
+## Pulling upstream crawler fixes
 
-## Release process
+```bash
+git fetch upstream
+git log --oneline HEAD..upstream/main -- app/crawlers/
+git cherry-pick <sha>
+```
 
-- Every push to `main` publishes `ghcr.io/btseee/mongolian-bank-exchange-rate:v{version}` +
-  `:latest` via the `publish` job in `ci.yml`, where `{version}` is read from
-  `app/__version__.py` (not the git ref) — deliberate: the same two tags get overwritten in
-  place on every push, so no `edge`/`sha-*` images pile up between releases. A new image tag
-  only appears once `__version__.py` is actually bumped. This is separate from Render, which
-  builds its own image straight from the Dockerfile on every push (`render.yaml`'s
-  `autoDeploy: true`) — Render never pulls from ghcr.io.
-- To cut a versioned release: update `CHANGELOG.md`, bump `app/__version__.py`, then push a
-  `vX.Y.Z` tag matching the new version. CI publishes the new `vX.Y.Z` + `latest` images and
-  creates a GitHub Release (title is just `${{ github.ref_name }}`, e.g. `v1.1.0` — keep it that
-  plain, no descriptive suffix, to match every prior release).
-- `generate_release_notes: true` produces an empty body when there were no PRs merged (this
-  repo pushes straight to `main`) — write real notes from the CHANGELOG entry and
-  `gh release edit vX.Y.Z --notes-file ...` afterward if that happens.
-
-## Before committing
-
-Run the full check sequence (isort, black, ruff, pytest) — CI enforces all four and will fail
-the build otherwise. After touching `.github/workflows/*.yml`, check CodeQL's workflow-scanning
-rules (`Settings > Code security > Code scanning`) — every job needs an explicit `permissions:`
-block at the minimum scope it actually needs (`{}` if it doesn't touch the repo/token at all).
+Expect conflicts only in the six crawlers deliberately diverged from
+upstream: `mongolbank`, `capitronbank`, `transbank`, `mbank`, `sendmn`,
+`naimansharga`. Each has a module docstring saying what was changed and
+why — read it before resolving, and keep the divergence.

@@ -1,8 +1,9 @@
-__version__ = "1.1.0"
-__title__ = "mongolian-bank-exchange-rate"
-__description__ = "Mongolian Bank Exchange Rate API"
-__author__ = "Battseren Badral"
-__author_email__ = "bbattseren88@gmail.com"
-__url__ = "https://btseee.github.io"
+__version__ = "2.0.0"
+__title__ = "tugrikrate-backend"
+__description__ = "Exchange-rate backend for the TugrikRate iOS app"
 __license__ = "MIT"
-__donation__ = "https://buymeacoffee.com/btseee"
+
+# Forked from btseee/mongolian-bank-exchange-rate (MIT). The bank
+# crawlers originate there and it remains upstream for crawler fixes.
+__author__ = "Battseren Badral (upstream)"
+__url__ = "https://github.com/btseee/mongolian-bank-exchange-rate"

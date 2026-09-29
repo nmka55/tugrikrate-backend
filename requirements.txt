@@ -10,8 +10,10 @@ psycopg[binary]==3.3.4
 # Configuration
 python-dotenv==1.2.2
 
-# Scheduling
-schedule==1.2.2
+# Scheduling - APScheduler replaces `schedule`: it has real timezone
+# support (Asia/Ulaanbaatar) and built-in trigger jitter, neither of
+# which `schedule` offers.
+APScheduler==3.11.3
 
 # HTTP
 requests==2.34.2

@@ -1,5 +1,6 @@
 """BogdBank crawler using Playwright for JavaScript rendering."""
 
+import json
 from typing import Dict
 
 from app.config import config
@@ -16,18 +17,25 @@ class BogdBank(PlaywrightCrawler):
         page.wait_for_selector("table", timeout=self.timeout)
         page.wait_for_timeout(2000)
 
+        # Header is: Валют | Монгол банк | Бэлэн (Авах, Зарах) |
+        # Бэлэн бус (Авах, Зарах) - so 2,3 are cash and 4,5 non-cash.
+        # Column 1 is the Bank of Mongolia reference, not Bogd's quote.
         rates = {}
+        captured = []
         for row in page.locator("table tbody tr").all():
             cells = row.locator("td").all()
             if len(cells) >= 6:
                 code = self._extract_code(cells[0])
                 if code and len(code) == 3:
+                    texts = [c.inner_text() for c in cells[:6]]
                     rates[code] = self.make_rate(
-                        cash_buy=self.parse_float(cells[2].inner_text()),
-                        cash_sell=self.parse_float(cells[3].inner_text()),
-                        noncash_buy=self.parse_float(cells[4].inner_text()),
-                        noncash_sell=self.parse_float(cells[5].inner_text()),
+                        cash_buy=self.parse_float(texts[2]),
+                        cash_sell=self.parse_float(texts[3]),
+                        noncash_buy=self.parse_float(texts[4]),
+                        noncash_sell=self.parse_float(texts[5]),
                     )
+                    captured.append([code] + texts[1:])
+        self.record_payload(json.dumps(captured, ensure_ascii=False))
         return rates
 
     @staticmethod

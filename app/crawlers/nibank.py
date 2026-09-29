@@ -1,5 +1,6 @@
 """NIBank crawler using Playwright for JavaScript rendering."""
 
+import json
 import re
 from typing import Dict
 
@@ -20,8 +21,10 @@ class NIBank(PlaywrightCrawler):
         page.wait_for_selector(".exchange-block", timeout=self.timeout)
 
         rates = {}
+        captured = []
         for block in page.locator(".exchange-block").all():
             text = block.inner_text()
+            captured.append(text)
             lines = [line.strip() for line in text.split("\n") if line.strip()]
             if len(lines) < 6:
                 continue
@@ -47,4 +50,5 @@ class NIBank(PlaywrightCrawler):
             rates[code] = self.make_rate(
                 cash_buy, cash_sell, noncash_buy, noncash_sell
             )
+        self.record_payload(json.dumps(captured, ensure_ascii=False))
         return rates

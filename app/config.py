@@ -63,8 +63,52 @@ class Config:
     # Database
     DATABASE_URL = _database_url()
 
-    # Scheduler
-    CRON_SCHEDULE = _env("CRON_SCHEDULE", "0 9 * * *")
+    # Scheduler. Crawls run on a fast cadence during Mongolian banking
+    # hours and an hourly one outside them, both in local time - banks
+    # republish on their own working day, not on UTC.
+    SCHEDULER_ENABLED = _env_bool("SCHEDULER_ENABLED", True)
+    # Which source group this process collects. "all" (default) keeps
+    # everything in one process. Splitting into CRAWL_GROUP=fast for the
+    # web service and CRAWL_GROUP=slow for a worker puts the five
+    # headless-Chromium sources in their own memory space - the two
+    # groups own disjoint sources, so they never write the same rows.
+    CRAWL_GROUP = _env("CRAWL_GROUP", "all").strip().lower()
+    if CRAWL_GROUP not in ("all", "fast", "slow"):
+        raise ValueError("CRAWL_GROUP must be one of: all, fast, slow")
+    CRAWL_TIMEZONE = _env("CRAWL_TIMEZONE", "Asia/Ulaanbaatar")
+    CRAWL_ACTIVE_START_HOUR = _env_non_negative_int(
+        "CRAWL_ACTIVE_START_HOUR", 8
+    )
+    CRAWL_ACTIVE_END_HOUR = _env_non_negative_int("CRAWL_ACTIVE_END_HOUR", 20)
+    CRAWL_ACTIVE_INTERVAL_MINUTES = _env_positive_int(
+        "CRAWL_ACTIVE_INTERVAL_MINUTES", 15
+    )
+    CRAWL_OFFPEAK_INTERVAL_MINUTES = _env_positive_int(
+        "CRAWL_OFFPEAK_INTERVAL_MINUTES", 60
+    )
+    # Spread each fire randomly over +/- this many seconds so a bank
+    # never sees requests land on an exact 15-minute boundary.
+    CRAWL_JITTER_SECONDS = _env_non_negative_int("CRAWL_JITTER_SECONDS", 90)
+    # Playwright sources cost a headless Chromium each, so they run on
+    # a multiple of the base interval (4 => hourly while active).
+    CRAWL_PLAYWRIGHT_MULTIPLIER = _env_positive_int(
+        "CRAWL_PLAYWRIGHT_MULTIPLIER", 4
+    )
+    # How far back a source may look for its most recent publication
+    # before giving up (Naiman Sharga has 3-day gaps).
+    SOURCE_LOOKBACK_DAYS = _env_non_negative_int("SOURCE_LOOKBACK_DAYS", 7)
+
+    # Freshness thresholds behind the v1 `status` field. A source is
+    # `ok` while it succeeded within this multiple of its own interval,
+    # `stale` after that, and `failing` once it has missed this many
+    # consecutive attempts.
+    STALE_AFTER_INTERVALS = _env_positive_int("STALE_AFTER_INTERVALS", 3)
+    FAILING_AFTER_ATTEMPTS = _env_positive_int("FAILING_AFTER_ATTEMPTS", 3)
+    # A source can be perfectly reachable while serving rates it
+    # published days ago (Naiman Sharga runs 2-3 day gaps). When a
+    # source states its publication date and that date is older than
+    # this, it is reported stale even though the crawl succeeded.
+    PUBLISHED_STALE_HOURS = _env_positive_int("PUBLISHED_STALE_HOURS", 36)
 
     # HTTP settings
     SSL_VERIFY = _env_bool("SSL_VERIFY", True)
@@ -103,7 +147,12 @@ class Config:
     ENABLE_PARALLEL = _env_bool("ENABLE_PARALLEL", True)
     MAX_WORKERS = _env_positive_int("MAX_WORKERS", 8)
     PLAYWRIGHT_MAX_WORKERS = _env_positive_int("PLAYWRIGHT_MAX_WORKERS", 3)
-    BACKFILL_DELAY_SECONDS = _env_non_negative_int("BACKFILL_DELAY_SECONDS", 2)
+
+    # Snapshot retention. 0 keeps everything; snapshots are written only
+    # when rates actually change, so growth is modest either way.
+    SNAPSHOT_RETENTION_DAYS = _env_non_negative_int(
+        "SNAPSHOT_RETENTION_DAYS", 0
+    )
 
     # Bank API endpoints
     KHANBANK_URI = _env(

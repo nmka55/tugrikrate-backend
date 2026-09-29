@@ -36,9 +36,10 @@ class XacBank(BaseCrawler):
         )
         resp = self.get(url)
         resp.raise_for_status()
-        return resp.json()
+        return self.json_exact(resp)
 
     def _parse(self, docs: list) -> Dict[str, CurrencyDetail]:
+        self._set_published(docs)
         rates = {}
         for item in docs:
             code = item.get("code", "").lower()
@@ -50,3 +51,17 @@ class XacBank(BaseCrawler):
                     noncash_sell=self.parse_float(item.get("sell")),
                 )
         return rates
+
+    def _set_published(self, docs: list) -> None:
+        """XacBank stamps each rate document with the moment it took
+        effect, so the feed can report a real published_at instead of
+        leaving it null."""
+        stamps = [str(d.get("date")) for d in docs if d.get("date")]
+        if not stamps:
+            return
+        try:
+            self.published_date = datetime.fromisoformat(
+                max(stamps).replace("Z", "+00:00")
+            ).date()
+        except ValueError:
+            self.published_date = None

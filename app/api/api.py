@@ -1,8 +1,8 @@
 """FastAPI application: middleware, lifespan, and router assembly.
 
 Endpoint handlers themselves live in app.api.routers.* - this module only
-wires the app together. See app.api.dependencies for the shared BankName
-enum, date parsing, and admin-key auth used across routers.
+wires the app together. See app.api.dependencies for the shared source
+enum and admin-key auth.
 """
 
 import asyncio
@@ -16,9 +16,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.__version__ import __author__, __license__, __url__, __version__
-from app.api.routers import admin, rates, system
+from app.api.routers import admin, system, v1
 from app.config import config
 from app.db.database import init_db
+from app.services import scheduler
 from app.utils.logger import logger
 
 RATE_LIMIT_EXCLUDED_PATHS = {"/", "/redoc", "/openapi.json", "/api/health"}
@@ -40,23 +41,31 @@ async def _self_ping_loop() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    # The scheduler runs in-process: a 15-minute cadence is well below
+    # what an external HTTP trigger can hold to reliably. Set
+    # SCHEDULER_ENABLED=false to drive crawls via /api/admin/crawl
+    # instead, e.g. from a separate worker.
+    scheduler.start()
     task = None
     if config.SELF_PING_URL:
         task = asyncio.create_task(_self_ping_loop())
     yield
     if task is not None:
         task.cancel()
+    scheduler.shutdown()
 
 
 app = FastAPI(
-    title="Монголын Банкуудын Валютын Ханш API",
+    title="TugrikRate Rates API",
     version=__version__,
     docs_url="/",
     description=(
-        "Монголын банк, санхүүгийн байгууллагуудын валютын ханшийг "
-        "нэг хэлбэртэй JSON бүтэцтэйгээр буцаадаг REST API. "
-        "Swagger дээр банкны нэр, огноо, pagination параметрүүдийг сонгон "
-        "турших боломжтой."
+        "Exchange rates for Mongolian tugrik (MNT), collected from 15 "
+        "Mongolian banks and financial institutions.\n\n"
+        "`GET /v1/rates` is the stable public contract. Rates are JSON "
+        "**strings** so exact decimal precision survives the wire, and "
+        "each quote states the channel and side the source actually "
+        "publishes - nothing is copied between channels or inferred."
     ),
     contact={"name": __author__, "url": __url__},
     license_info={
@@ -65,14 +74,11 @@ app = FastAPI(
     },
     lifespan=lifespan,
     openapi_tags=[
-        {"name": "Ерөнхий", "description": "API-н ерөнхий мэдээлэл"},
-        {"name": "Ханш", "description": "Валютын ханшийн endpoints"},
+        {"name": "v1", "description": "Stable public contract"},
+        {"name": "System", "description": "Health and service info"},
         {
-            "name": "Админ",
-            "description": (
-                "Crawl/backfill job идэвхжүүлэх endpoints "
-                "(X-Admin-Key шаардана)"
-            ),
+            "name": "Admin",
+            "description": "On-demand crawls (requires X-Admin-Key)",
         },
     ],
 )
@@ -144,5 +150,5 @@ async def rate_limit(request: Request, call_next):
 
 
 app.include_router(system.router)
-app.include_router(rates.router)
+app.include_router(v1.router)
 app.include_router(admin.router)

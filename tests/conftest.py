@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -6,7 +8,10 @@ from sqlalchemy.pool import StaticPool
 
 from app.api.api import _rate_limit_hits, app
 from app.db.database import get_db
-from app.models.currency import Base
+from app.models.exchange_rate import CurrencyDetail, Rate
+from app.models.snapshot import Base
+from app.sources.models import CrawlResult, Quote
+from app.sources.registry import BY_ID
 
 
 @pytest.fixture(scope="function")
@@ -36,7 +41,15 @@ def test_db():
 
 
 @pytest.fixture(scope="function")
-def client(test_db):
+def client(test_db, monkeypatch):
+    # The app's lifespan creates the real schema and starts the
+    # scheduler. Neither belongs in a test: init_db would write to the
+    # configured database rather than the in-memory one, and the
+    # scheduler would fire live crawls at real bank sites.
+    monkeypatch.setattr("app.api.api.init_db", lambda: None)
+    monkeypatch.setattr("app.api.api.scheduler.start", lambda: None)
+    monkeypatch.setattr("app.api.api.scheduler.shutdown", lambda: None)
+
     _rate_limit_hits.clear()
     with TestClient(app) as test_client:
         yield test_client
@@ -44,48 +57,49 @@ def client(test_db):
 
 
 @pytest.fixture
-def sample_rate_data():
-    return {
-        "usd": {
-            "cash": {"buy": 3420.5, "sell": 3450.0},
-            "noncash": {"buy": 3415.0, "sell": 3455.0},
-        },
-        "eur": {
-            "cash": {"buy": 3720.0, "sell": 3780.0},
-            "noncash": {"buy": 3715.0, "sell": 3785.0},
-        },
-    }
+def khanbank_spec():
+    return BY_ID["khanbank"]
 
 
 @pytest.fixture
-def sample_khanbank_response():
-    return [
-        {
-            "currency": "USD",
-            "cashBuyRate": 3420.5,
-            "cashSellRate": 3450.0,
-            "buyRate": 3415.0,
-            "sellRate": 3455.0,
-        },
-        {
-            "currency": "EUR",
-            "cashBuyRate": 3720.0,
-            "cashSellRate": 3780.0,
-            "buyRate": 3715.0,
-            "sellRate": 3785.0,
-        },
-    ]
+def mongolbank_spec():
+    return BY_ID["mongolbank"]
 
 
 @pytest.fixture
-def sample_golomt_response():
-    return {
-        "result": {
-            "USD": {
-                "cash_buy": {"cvalue": 3420.5},
-                "cash_sell": {"cvalue": 3450.0},
-                "non_cash_buy": {"cvalue": 3415.0},
-                "non_cash_sell": {"cvalue": 3455.0},
-            },
-        }
-    }
+def sendmn_spec():
+    return BY_ID["sendmn"]
+
+
+def make_detail(
+    cash_buy=None, cash_sell=None, noncash_buy=None, noncash_sell=None
+) -> CurrencyDetail:
+    """Build the crawler-shaped value the adapter consumes."""
+
+    def dec(value):
+        return None if value is None else Decimal(str(value))
+
+    return CurrencyDetail(
+        cash=Rate(buy=dec(cash_buy), sell=dec(cash_sell)),
+        noncash=Rate(buy=dec(noncash_buy), sell=dec(noncash_sell)),
+    )
+
+
+@pytest.fixture
+def make_result():
+    def _make(source_id="khanbank", quotes=None, payload=b"{}", **kwargs):
+        return CrawlResult(
+            source_id=source_id,
+            quotes=(
+                quotes
+                if quotes is not None
+                else [
+                    Quote("USD", "cash", "buy", Decimal("3450.50")),
+                    Quote("USD", "cash", "sell", Decimal("3480.00")),
+                ]
+            ),
+            payload=payload,
+            **kwargs,
+        )
+
+    return _make

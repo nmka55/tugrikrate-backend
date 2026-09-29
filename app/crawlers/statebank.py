@@ -11,7 +11,7 @@ class StateBank(BaseCrawler):
     def crawl(self) -> Dict[str, CurrencyDetail]:
         resp = self.get(config.STATEBANK_URI)
         resp.raise_for_status()
-        payload = resp.json()
+        payload = self.json_exact(resp)
         data = (
             payload.get("data", []) if isinstance(payload, dict) else payload
         )

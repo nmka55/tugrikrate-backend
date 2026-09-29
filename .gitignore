@@ -219,3 +219,5 @@ __marimo__/
 
 # Serena
 .serena/
+# Diagnostic output from scripts/probe_units.py
+probe_units.json

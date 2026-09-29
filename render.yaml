@@ -1,25 +1,26 @@
 # Render Blueprint - https://render.com/docs/blueprint-spec
 #
-# Deploys the API as a single free Docker web service. Render's free tier
-# has no persistent disk and no free background-worker/cron process type,
-# so:
-#   - DATABASE_URL is intentionally left unset below -> the app falls back
-#     to local SQLite, which is wiped on every deploy/restart. For real
-#     persistence, set DATABASE_URL manually in the Render dashboard to an
-#     external Postgres connection string (e.g. a free Neon or Supabase
-#     instance) - see README.md's "Deploying to Render" section.
-#   - Daily crawls and backfills run via POST /api/admin/crawl and
-#     POST /api/admin/backfill instead of an always-on scheduler process.
-#     See .github/workflows/scheduled-crawl.yml for the external trigger.
+# Deploys the service as a single Docker web service. The crawl
+# scheduler runs inside this process (see app/services/scheduler.py), so
+# no separate worker is needed - which is what makes the 15-minute
+# cadence possible on a platform whose free tier has no worker type.
 #
-# Only secrets and values that genuinely differ from app/config.py's own
-# defaults are listed here - everything else already has a sensible
-# default in code, and duplicating it here would just be another place
-# for the two to drift apart. The full env var reference lives in
-# .env.example and README.md.
+# Two things to know before using the free plan:
+#
+#   - No persistent disk, so the default SQLite database is wiped on
+#     every deploy and restart. Set DATABASE_URL manually in the
+#     dashboard to an external Postgres connection string (Neon,
+#     Supabase) for anything you want to keep. It is deliberately not
+#     defined here so it cannot be committed by accident.
+#   - 512MB RAM. Upstream recorded repeated OOM kills from a single
+#     headless Chromium running alongside the HTTP crawler pool, which
+#     is why the settings below are conservative.
+#
+# Only values that differ from app/config.py's own defaults are listed.
+# The full reference lives in .env.example and README.md.
 services:
   - type: web
-    name: mongolian-bank-exchange-rate
+    name: tugrikrate-backend
     env: docker
     plan: free
     region: singapore
@@ -29,32 +30,57 @@ services:
     healthCheckPath: /api/health
     autoDeploy: true
     envVars:
-      # Secrets - set manually in Render's dashboard after first deploy.
+      # Secret - set manually in Render's dashboard after first deploy.
       - key: ADMIN_API_KEY
         sync: false
-      # Optional performance hint for ArigBank - the crawler already signs
-      # in fresh when this is unset, so leaving it blank forever is fine.
+      # Optional performance hint for ArigBank; the crawler signs in
+      # fresh when unset, so leaving it blank forever is fine.
       - key: ARIGBANK_BEARER_TOKEN
         sync: false
-      # Free tier is 512MB RAM / 0.1 CPU. app/config.py's own defaults
-      # (MAX_WORKERS=8, PLAYWRIGHT_MAX_WORKERS=3) assume more headroom
-      # than that - running 3 concurrent headless Chromium instances risks
-      # an OOM kill, so both are turned down here for this plan only.
+      # Free tier is 512MB / 0.1 CPU. app/config.py's defaults assume
+      # more headroom than that.
       - key: MAX_WORKERS
         value: "4"
       - key: PLAYWRIGHT_MAX_WORKERS
         value: "1"
-      # ScraperService.run_all() runs the HTTP and Playwright crawler
-      # groups concurrently by default - even at PLAYWRIGHT_MAX_WORKERS=1,
-      # a single Chromium instance running at the same time as the HTTP
-      # group repeatedly exceeded 512MB and got OOM-killed mid-crawl
-      # (confirmed via repeated Scheduled Crawl failures). Disabling
-      # parallelism makes every crawler run one at a time, so exactly one
-      # crawl (HTTP or Playwright) is ever in memory - slower, but the
-      # only thing that has actually stopped the OOM restarts.
-      - key: ENABLE_PARALLEL
-        value: "false"
+      # Run the five Playwright sources every 2 hours instead of hourly,
+      # so a headless Chromium is in memory half as often. Raise further
+      # if the instance still gets OOM-killed.
+      - key: CRAWL_PLAYWRIGHT_MULTIPLIER
+        value: "8"
       # Render's edge proxy is a trustworthy source for X-Forwarded-For,
       # unlike the conservative app-level default of false.
       - key: TRUST_PROXY_HEADERS
         value: "true"
+      # A free instance sleeps after ~15 minutes without inbound
+      # traffic, which stops the scheduler too. Set this to the
+      # service's own URL + /api/health to keep it awake - note it
+      # consumes the monthly instance-hour quota.
+      - key: SELF_PING_URL
+        sync: false
+
+# Splitting the five Playwright sources into their own process keeps
+# headless Chromium out of the process that serves requests, so an OOM
+# kill can no longer take the API down with it. A worker is a paid
+# process type on Render, so it is left commented out here - the block
+# above runs everything in one process (CRAWL_GROUP defaults to "all").
+#
+# To split: set CRAWL_GROUP=fast on the web service above, uncomment
+# this, and point both at the same Postgres DATABASE_URL.
+#
+#   - type: worker
+#     name: tugrikrate-collector
+#     env: docker
+#     plan: starter
+#     region: singapore
+#     branch: main
+#     dockerfilePath: ./Dockerfile
+#     dockerContext: .
+#     dockerCommand: python -m scripts.worker
+#     envVars:
+#       - key: CRAWL_GROUP
+#         value: "slow"
+#       - key: DATABASE_URL
+#         sync: false
+#       - key: PLAYWRIGHT_MAX_WORKERS
+#         value: "2"

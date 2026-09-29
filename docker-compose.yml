@@ -1,11 +1,34 @@
+# Two collector processes, split by cost:
+#
+#   api     CRAWL_GROUP=fast  10 JSON sources + serves /v1/rates
+#   worker  CRAWL_GROUP=slow   5 Playwright sources, no web server
+#
+# Each headless Chromium is the largest memory consumer here, and an OOM
+# kill in a combined process takes the API down with it. The two groups
+# own disjoint sources and share only the database, so they need no
+# coordination - neither can write the other's rows.
+#
+# To run everything in one process instead, set CRAWL_GROUP_API=all and
+# stop the worker service.
 services:
   api:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: mongolian-bank-api
+    container_name: tugrikrate-api
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-bankuser}:${POSTGRES_PASSWORD:-bankpass123}@db:5432/${POSTGRES_DB:-exchange_rates}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-}
+      SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-true}
+      CRAWL_GROUP: ${CRAWL_GROUP_API:-fast}
+      CRAWL_TIMEZONE: ${CRAWL_TIMEZONE:-Asia/Ulaanbaatar}
+      CRAWL_ACTIVE_INTERVAL_MINUTES: ${CRAWL_ACTIVE_INTERVAL_MINUTES:-15}
+      CRAWL_OFFPEAK_INTERVAL_MINUTES: ${CRAWL_OFFPEAK_INTERVAL_MINUTES:-60}
+      CRAWL_JITTER_SECONDS: ${CRAWL_JITTER_SECONDS:-90}
+      CRAWL_PLAYWRIGHT_MULTIPLIER: ${CRAWL_PLAYWRIGHT_MULTIPLIER:-4}
+      ENABLE_PARALLEL: ${ENABLE_PARALLEL:-true}
+      MAX_WORKERS: ${MAX_WORKERS:-8}
+      PLAYWRIGHT_MAX_WORKERS: ${PLAYWRIGHT_MAX_WORKERS:-3}
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
       TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-false}
       RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
@@ -13,7 +36,6 @@ services:
       RATE_LIMIT_WINDOW_SECONDS: ${RATE_LIMIT_WINDOW_SECONDS:-60}
       RATE_LIMIT_MAX_CLIENTS: ${RATE_LIMIT_MAX_CLIENTS:-10000}
       API_MAX_LIMIT: ${API_MAX_LIMIT:-100}
-      ADMIN_API_KEY: ${ADMIN_API_KEY:-}
     ports:
       - "8000:8000"
     depends_on:
@@ -21,7 +43,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
     networks:
-      - bank-network
+      - tugrikrate-network
     healthcheck:
       test:
         [
@@ -35,28 +57,33 @@ services:
       retries: 3
       start_period: 40s
 
-  cron:
+  worker:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: mongolian-bank-cron
-    command: python -m scripts.cron
+    container_name: tugrikrate-worker
+    command: python -m scripts.worker
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-bankuser}:${POSTGRES_PASSWORD:-bankpass123}@db:5432/${POSTGRES_DB:-exchange_rates}
-      CRON_SCHEDULE: ${CRON_SCHEDULE:-0 9 * * *}
+      CRAWL_GROUP: slow
+      SCHEDULER_ENABLED: "true"
+      CRAWL_TIMEZONE: ${CRAWL_TIMEZONE:-Asia/Ulaanbaatar}
+      CRAWL_ACTIVE_INTERVAL_MINUTES: ${CRAWL_ACTIVE_INTERVAL_MINUTES:-15}
+      CRAWL_OFFPEAK_INTERVAL_MINUTES: ${CRAWL_OFFPEAK_INTERVAL_MINUTES:-60}
+      CRAWL_JITTER_SECONDS: ${CRAWL_JITTER_SECONDS:-90}
+      CRAWL_PLAYWRIGHT_MULTIPLIER: ${CRAWL_PLAYWRIGHT_MULTIPLIER:-4}
       ENABLE_PARALLEL: ${ENABLE_PARALLEL:-true}
-      MAX_WORKERS: ${MAX_WORKERS:-8}
-      PLAYWRIGHT_MAX_WORKERS: ${PLAYWRIGHT_MAX_WORKERS:-3}
+      PLAYWRIGHT_MAX_WORKERS: ${PLAYWRIGHT_MAX_WORKERS:-2}
     depends_on:
       db:
         condition: service_healthy
     restart: unless-stopped
     networks:
-      - bank-network
+      - tugrikrate-network
 
   db:
     image: postgres:15-alpine
-    container_name: mongolian-bank-db
+    container_name: tugrikrate-db
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-bankuser}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-bankpass123}
@@ -67,7 +94,7 @@ services:
       - "5432:5432"
     restart: unless-stopped
     networks:
-      - bank-network
+      - tugrikrate-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bankuser}"]
       interval: 10s
@@ -79,5 +106,5 @@ volumes:
     driver: local
 
 networks:
-  bank-network:
+  tugrikrate-network:
     driver: bridge

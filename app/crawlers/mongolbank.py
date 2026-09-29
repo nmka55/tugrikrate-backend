@@ -1,3 +1,13 @@
+"""Bank of Mongolia - the official daily reference rate.
+
+One number per currency, with no buy/sell spread. Upstream copied that
+number into both noncash.buy and noncash.sell, which invented a
+zero-width spread the central bank never published. Here it is written
+once into cash.buy, which app/sources/registry.py maps to
+channel="reference", side="reference".
+"""
+
+from datetime import date
 from typing import Dict
 
 from lxml import etree
@@ -15,7 +25,7 @@ class MongolBank(BaseCrawler):
         resp.raise_for_status()
 
         try:
-            return self._parse_json(resp.json())
+            return self._parse_json(self.json_exact(resp))
         except ValueError:
             return self._parse(resp.text)
 
@@ -30,6 +40,11 @@ class MongolBank(BaseCrawler):
         if row is None:
             return {}
 
+        # The central bank states the date its rate applies to, so the
+        # feed can report published_at instead of leaving it null - and
+        # can show a stale rate as stale when publication lags.
+        self._set_published(row.get("RATE_DATE"))
+
         rates = {}
         for code, value in row.items():
             if code == "RATE_DATE" or len(code) != 3:
@@ -37,11 +52,14 @@ class MongolBank(BaseCrawler):
 
             rate = self.parse_float(value)
             if rate is not None:
-                rates[code.lower()] = self.make_rate(
-                    noncash_buy=rate,
-                    noncash_sell=rate,
-                )
+                rates[code.lower()] = self.make_rate(cash_buy=rate)
         return rates
+
+    def _set_published(self, raw) -> None:
+        try:
+            self.published_date = date.fromisoformat(str(raw))
+        except (TypeError, ValueError):
+            self.published_date = None
 
     def _parse(self, xml_text: str) -> Dict[str, CurrencyDetail]:
         rates = {}
@@ -60,8 +78,5 @@ class MongolBank(BaseCrawler):
             code = (code_node.text or "").lower()
             rate = self.parse_float(rate_node.text)
             if code and rate is not None:
-                rates[code] = self.make_rate(
-                    noncash_buy=rate,
-                    noncash_sell=rate,
-                )
+                rates[code] = self.make_rate(cash_buy=rate)
         return rates

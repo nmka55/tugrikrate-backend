@@ -1,24 +1,24 @@
-"""In-process job lock and state for the HTTP-triggered admin endpoints.
+"""In-process job lock and state for the HTTP-triggered admin crawl.
 
-Render's free tier has no background-worker/cron process type, so daily
-crawls and backfills are triggered over HTTP by an external scheduler
-instead of an always-on process. try_start()/finish() bracket every admin
-job so a manually-triggered backfill can never overlap the scheduled daily
-crawl (or another admin call) against the same bank sites and DB rows.
-This lock is correct only as long as Uvicorn runs as a single process
-(no --workers flag) - true for this deployment.
+Kept from upstream because it is still the escape hatch when the
+in-process scheduler is turned off (SCHEDULER_ENABLED=false) and an
+external trigger drives crawls over HTTP instead.
+
+The lock is correct only while Uvicorn runs as a single process (no
+--workers flag) - true for this deployment. Backfill is gone: under
+snapshot semantics there is nothing to backfill, because banks do not
+serve historical intraday rates and writing invented ones would put
+fabricated history behind a real timestamp.
 """
 
 import threading
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from typing import Optional
 
-from app.db import repository
-from app.db.database import SessionLocal
-from app.models.exchange_rate import ExchangeRate
-from app.services.scraper import ScraperService
+from app.config import config
+from app.services.collector import crawl_source, crawl_sources
+from app.sources.registry import BY_ID, specs_for_group
 from app.utils.logger import logger
-from scripts.backfill import backfill as run_backfill_range
 
 _lock = threading.Lock()
 _state = {
@@ -36,9 +36,8 @@ def get_status() -> dict:
 
 
 def try_start(job_type: str) -> bool:
-    """Non-blocking lock acquire. The caller (a router) must call finish()
-    exactly once afterwards, whether the job runs sync or in the background.
-    """
+    """Non-blocking lock acquire. The caller must call finish() exactly
+    once afterwards, whether the job runs sync or in the background."""
     if not _lock.acquire(blocking=False):
         return False
     _state.update(
@@ -61,51 +60,26 @@ def finish(result: Optional[dict] = None, error: Optional[str] = None) -> None:
 
 
 def run_crawl_job() -> None:
-    """Background task for POST /api/admin/crawl. Assumes the lock is
-    already held by the router's try_start() call. Must be a plain `def`,
-    not `async def` - FastAPI runs BackgroundTasks callables in a worker
-    thread, keeping Uvicorn's event loop free while this blocks on I/O."""
+    """Background task for POST /api/admin/crawl. Must be a plain `def`
+    so FastAPI runs it in a worker thread and Uvicorn's event loop stays
+    free while this blocks on I/O."""
     try:
-        result = ScraperService().run_all()
+        # Scoped to this process's own group, so triggering a crawl on
+        # the web service cannot race a worker that owns other sources.
+        finish(result=crawl_sources(specs_for_group(config.CRAWL_GROUP)))
+    except Exception as exc:
+        logger.error(f"Admin crawl job failed: {exc}")
+        finish(error=str(exc))
+
+
+def run_single_source_job(source_id: str) -> dict:
+    """Synchronous single-source crawl. crawl_source persists its own
+    result and never raises, so the outcome is always reportable."""
+    try:
+        result = crawl_source(BY_ID[source_id])
         finish(result=result)
-    except Exception as e:
-        logger.error(f"Admin crawl job failed: {e}")
-        finish(error=str(e))
-
-
-def run_backfill_job(start: date, end: date) -> None:
-    """Background task for POST /api/admin/backfill. Assumes the lock is
-    already held by the router's try_start() call."""
-    try:
-        result = run_backfill_range(start, end)
-        finish(result=result)
-    except Exception as e:
-        logger.error(f"Admin backfill job failed: {e}")
-        finish(error=str(e))
-
-
-def run_single_bank_job(bank_name: str) -> Optional[dict]:
-    """Synchronous single-bank crawl for POST /api/admin/crawl/{bank_name}.
-    Assumes the lock is already held by the router's try_start() call.
-
-    ScraperService.scrape_bank() only fetches, it never persists - unlike
-    run_all()'s own _save() step - so this explicitly saves on success.
-    """
-    try:
-        service = ScraperService()
-        rates = service.scrape_bank(bank_name)
-        if rates:
-            db = SessionLocal()
-            try:
-                data = ExchangeRate(
-                    date=service.date, bank=bank_name, rates=rates
-                )
-                repository.save_rates(db, data)
-            finally:
-                db.close()
-        finish(result={"bank_name": bank_name, "rates": rates})
-        return rates
-    except Exception as e:
-        logger.error(f"Admin single-bank crawl failed for {bank_name}: {e}")
-        finish(error=str(e))
+        return result
+    except Exception as exc:
+        logger.error(f"Admin crawl failed for {source_id}: {exc}")
+        finish(error=str(exc))
         raise
