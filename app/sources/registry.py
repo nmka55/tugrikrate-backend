@@ -96,6 +96,11 @@ class SourceSpec:
     id: str
     name: str
     name_mn: str
+    # Where the two names above came from. Names are facts about the
+    # world, not preferences: a later edit must beat this evidence, not
+    # just a hunch (see ARCHITECTURE.md, "Why source names are
+    # evidence-based").
+    name_evidence: str
     type: str
     crawler: type
     cadence: str
@@ -132,6 +137,10 @@ SPECS: tuple[SourceSpec, ...] = (
         id="khanbank",
         name="Khan Bank",
         name_mn="Хаан Банк",
+        name_evidence=(
+            "Legal entity Khan Bank JSC (FMO, Finnfund); Mongolian brand "
+            "ХААН Банк (Wikipedia). Unchanged."
+        ),
         type=TYPE_COMMERCIAL,
         crawler=KhanBank,
         cadence=CADENCE_FAST,
@@ -147,6 +156,10 @@ SPECS: tuple[SourceSpec, ...] = (
         id="golomtbank",
         name="Golomt Bank",
         name_mn="Голомт Банк",
+        name_evidence=(
+            "golomtbank.com/en titles itself Golomt Bank; Mongolian form "
+            "Голомт банк (Wikipedia, Wikidata). Unchanged."
+        ),
         type=TYPE_COMMERCIAL,
         crawler=GolomtBank,
         cadence=CADENCE_FAST,
@@ -159,7 +172,14 @@ SPECS: tuple[SourceSpec, ...] = (
     SourceSpec(
         id="xacbank",
         name="XacBank",
-        name_mn="Хас Банк",
+        name_mn="ХасБанк",
+        name_evidence=(
+            "The bank's own Facebook page and Mongolian company profiles "
+            "write ХасБанк as one word; the legal entity is XacBank JSC "
+            "(Green Climate Fund, Kiva). Mongolian Wikipedia titles the "
+            "article 'Хас банк', so spacing varies in the wild: the "
+            "one-word brand form is used. Was 'Хас Банк'."
+        ),
         type=TYPE_COMMERCIAL,
         crawler=XacBank,
         cadence=CADENCE_FAST,
@@ -173,6 +193,11 @@ SPECS: tuple[SourceSpec, ...] = (
         id="arigbank",
         name="Arig Bank",
         name_mn="Ариг Банк",
+        name_evidence=(
+            "zangia.mn profile 'Ариг Банк / Arig bank'; arigbank.mn page "
+            "titles read Ариг Банк. Renamed from Erel Bank in 2014. "
+            "Unchanged."
+        ),
         type=TYPE_COMMERCIAL,
         crawler=ArigBank,
         cadence=CADENCE_FAST,
@@ -184,8 +209,13 @@ SPECS: tuple[SourceSpec, ...] = (
     ),
     SourceSpec(
         id="statebank",
-        name="State Bank",
-        name_mn="Төрийн Банк",
+        name="State Bank of Mongolia",
+        name_mn="Төрийн банк",
+        name_evidence=(
+            "The bank's own Facebook page is 'State Bank of Mongolia "
+            "(Төрийн банк)'. Was 'State Bank', which is only the "
+            "Wikipedia article title."
+        ),
         type=TYPE_COMMERCIAL,
         crawler=StateBank,
         cadence=CADENCE_FAST,
@@ -202,6 +232,10 @@ SPECS: tuple[SourceSpec, ...] = (
         id="mongolbank",
         name="Bank of Mongolia",
         name_mn="Монгол Банк",
+        name_evidence=(
+            "mongolbank.mn/en titles itself 'The Bank Of Mongolia'; "
+            "Mongolian Монгол банк (also styled Монголбанк). Unchanged."
+        ),
         type=TYPE_CENTRAL,
         crawler=MongolBank,
         cadence=CADENCE_FAST,
@@ -217,6 +251,11 @@ SPECS: tuple[SourceSpec, ...] = (
         id="capitronbank",
         name="Capitron Bank",
         name_mn="Капитрон Банк",
+        name_evidence=(
+            "Facebook page 'Капитрон Банк / Capitron Bank'; "
+            "capitronbank.mn is titled 'Капитрон банк'. LinkedIn uses the "
+            "longer 'Capitron Bank of Mongolia'. Unchanged."
+        ),
         type=TYPE_COMMERCIAL,
         crawler=CapitronBank,
         cadence=CADENCE_FAST,
@@ -236,7 +275,13 @@ SPECS: tuple[SourceSpec, ...] = (
     SourceSpec(
         id="naimansharga",
         name="Naiman Sharga",
-        name_mn="Найман Шарга",
+        name_mn="Найман шарга валют арилжаа",
+        name_evidence=(
+            "Facebook page 'Найман шарга валют арилжаа' (literally "
+            "'Naiman Sharga currency exchange'). No official English name "
+            "was found: 'Naiman Sharga' is a transliteration, not a "
+            "registered English name. Was 'Найман Шарга'."
+        ),
         type=TYPE_EXCHANGE,
         crawler=NaimanSharga,
         cadence=CADENCE_FAST,
@@ -253,7 +298,13 @@ SPECS: tuple[SourceSpec, ...] = (
     SourceSpec(
         id="sendmn",
         name="SendMN",
-        name_mn="SendMN",
+        name_mn="Сэнд Эм Эн ББСБ",
+        name_evidence=(
+            "Legal entity 'Сэнд Эм Эн ББСБ' ХХК (mn.wikipedia), i.e. "
+            "SendMN NBFI LLC (Remitly); ББСБ = non-bank financial "
+            "institution. The consumer brand is written SendMN in both "
+            "languages (send.mn/mn, ikon.mn). Was 'SendMN'."
+        ),
         type=TYPE_REMITTANCE,
         crawler=SendMN,
         cadence=CADENCE_FAST,
@@ -268,7 +319,12 @@ SPECS: tuple[SourceSpec, ...] = (
     SourceSpec(
         id="mbank",
         name="M Bank",
-        name_mn="М Банк",
+        name_mn="М банк",
+        name_evidence=(
+            "m-bank.mn page titles read 'М банк'; the legal entity is 'М "
+            "БАНК ХК' (mongolchamber.mn); the app listing is 'M bank'. "
+            "Was 'М Банк'."
+        ),
         type=TYPE_COMMERCIAL,
         crawler=MBank,
         cadence=CADENCE_FAST,
@@ -281,8 +337,13 @@ SPECS: tuple[SourceSpec, ...] = (
     ),
     SourceSpec(
         id="tdbm",
-        name="Trade and Development Bank",
+        name="Trade and Development Bank of Mongolia",
         name_mn="Худалдаа Хөгжлийн Банк",
+        name_evidence=(
+            "tdbm.mn/en about page and the ADB document title both read "
+            "'Trade and Development Bank of Mongolia' (TDB for short). "
+            "Was 'Trade and Development Bank'."
+        ),
         type=TYPE_COMMERCIAL,
         crawler=TDBM,
         cadence=CADENCE_SLOW,
@@ -298,6 +359,11 @@ SPECS: tuple[SourceSpec, ...] = (
         id="bogdbank",
         name="Bogd Bank",
         name_mn="Богд Банк",
+        name_evidence=(
+            "Registered forms vary: 'Bogd Bank of Mongolia' (LinkedIn), "
+            "'Bogd Bank JSC' (FMO), 'Bogd Bank Llc' (EMIS). The short "
+            "brand is used. Unchanged."
+        ),
         type=TYPE_COMMERCIAL,
         crawler=BogdBank,
         cadence=CADENCE_SLOW,
@@ -313,6 +379,11 @@ SPECS: tuple[SourceSpec, ...] = (
         id="ckbank",
         name="Chinggis Khaan Bank",
         name_mn="Чингис Хаан Банк",
+        name_evidence=(
+            "ckbank.mn/page/about?lang=en reads 'Chinggis Khaan Bank'; "
+            "Facebook page 'Чингис Хаан Банк - Chinggis Khaan Bank'. "
+            "Unchanged."
+        ),
         type=TYPE_COMMERCIAL,
         crawler=CKBank,
         cadence=CADENCE_SLOW,
@@ -328,8 +399,14 @@ SPECS: tuple[SourceSpec, ...] = (
     ),
     SourceSpec(
         id="nibank",
-        name="National Investment Bank",
+        name="National Investment Bank of Mongolia",
         name_mn="Үндэсний Хөрөнгө Оруулалтын Банк",
+        name_evidence=(
+            "Facebook page (nibank.mn) 'Үндэсний Хөрөнгө Оруулалтын Банк "
+            "/ National Investment Bank of Mongolia'; SWIFT record "
+            "NAIMMNUB reads NATIONAL INVESTMENT BANK OF MONGOLIA. Was "
+            "'National Investment Bank'."
+        ),
         type=TYPE_COMMERCIAL,
         crawler=NIBank,
         cadence=CADENCE_SLOW,
@@ -343,8 +420,15 @@ SPECS: tuple[SourceSpec, ...] = (
     ),
     SourceSpec(
         id="transbank",
-        name="Trans Bank",
-        name_mn="Транс Банк",
+        name="TransBank",
+        name_mn="Тээвэр Хөгжлийн Банк",
+        name_evidence=(
+            "transbank.mn page title is 'Тээвэр хөгжлийн банк' (= "
+            "Transport Development Bank); zangia.mn profile 'Тээвэр "
+            "хөгжлийн банк / Trans bank'; Facebook 'TransBank'. The old "
+            "'Транс Банк' was a phonetic rendering of the brand, not the "
+            "registered Mongolian name. Was 'Trans Bank'."
+        ),
         type=TYPE_COMMERCIAL,
         crawler=TransBank,
         cadence=CADENCE_SLOW,

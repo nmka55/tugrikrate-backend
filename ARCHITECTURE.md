@@ -191,6 +191,37 @@ Not confirmed, therefore `verified: false`:
 
 `MNT` self-quotes (several sources publish MNT = 1) are dropped.
 
+### Why source names are evidence-based
+
+Every source carries an official English name (`name`) and Mongolian
+Cyrillic name (`name_mn`), and `name_evidence` in the registry records
+where each came from. Both names are served on `GET /v1/rates` (and
+`/v1/rates/{id}/history`); `/v1/sources` also serves the evidence.
+`tests/test_source_names.py` pins the table, so a name cannot drift
+without someone touching the evidence.
+
+Researched 2026-09-29 by web search of each bank's own pages (site
+titles, official Facebook pages, regulator/lender records). **The bank
+sites were unreachable from the sandbox that session** (egress proxy),
+so nothing was read off the live sites themselves - recheck against
+them when possible. Corrections made to the earlier registry values:
+
+| Source | Was | Now | Why |
+| --- | --- | --- | --- |
+| TransBank | `Trans Bank` / `Транс Банк` | `TransBank` / `Тээвэр Хөгжлийн Банк` | transbank.mn is titled *Тээвэр хөгжлийн банк* ("Transport Development Bank"); `Транс Банк` was a phonetic rendering of the brand, not a registered name. |
+| State Bank | `State Bank` | `State Bank of Mongolia` / `Төрийн банк` | The bank's own Facebook page; `State Bank` was only Wikipedia's article title. |
+| TDB | `Trade and Development Bank` | `Trade and Development Bank of Mongolia` | tdbm.mn/en and ADB both use the full form. |
+| National Investment Bank | `National Investment Bank` | `National Investment Bank of Mongolia` | The bank's Facebook page and its SWIFT record. |
+| XacBank | `Хас Банк` | `ХасБанк` | The bank writes it as one word. Mongolian sources vary (`Хас банк` on mn.wikipedia). |
+| M Bank | `М Банк` | `М банк` | m-bank.mn page titles. |
+| Naiman Sharga | `Найман Шарга` | `Найман шарга валют арилжаа` | Its own page name. **No official English name exists**; `Naiman Sharga` is a transliteration. |
+| SendMN | `SendMN` | `Сэнд Эм Эн ББСБ` | Legal Mongolian name (SendMN NBFI LLC). Consumer brand is `SendMN` in both languages, so the app may prefer the English string for display. |
+
+Unchanged after checking: Khan Bank, Golomt Bank, Arig Bank, Bank of
+Mongolia, Capitron Bank, Bogd Bank, Chinggis Khaan Bank. Where several
+registered forms exist (Bogd: "of Mongolia" / JSC / Llc) the short
+brand is used and the variants are listed in `name_evidence`.
+
 ### Why the payload hash is canonical, not raw
 
 Change detection keys on `payload_hash`. Hashing the raw HTTP body
@@ -251,6 +282,65 @@ behind real timestamps. Drop it by hand when satisfied.
 - [x] 186 tests; isort/black/ruff clean; CI green on Python 3.14.
 - [x] Public repo `nmka55/tugrikrate-backend`; ghcr.io image published.
 - [x] Running locally against SQLite, seeded 15/15.
+
+**2026-09-29 (later) - source names.**
+
+- [x] Official English + Mongolian names researched and evidenced for
+      all 15 sources; `name_mn` added to `GET /v1/rates`
+      (additive; `schema_version` stays 1). See §5.
+- [x] 235 tests; isort/black/ruff clean.
+
+**Requested but NOT built yet - blocked on network access.** Asked for
+in the same session: (1) international sources Frankfurter and
+ExchangeRate-API, normalised into the existing feed format; (2) source
+logos crawled and served as image URLs. Both need to *read live
+payloads*, which invariant-first practice here demands before any
+crawler is written (§5: four bugs were found only by reading payloads).
+The sandbox egress proxy returned 403 for `api.frankfurter.dev`,
+`open.er-api.com`, `frankfurter.dev`, `exchangerate-api.com` and all
+15 bank sites. Nothing below has been verified against a live response.
+
+Researched so far, **secondhand** (search snippets, plus the Frankfurter
+maintainer's GitHub reply, which was read directly):
+
+| | Frankfurter | ExchangeRate-API |
+| --- | --- | --- |
+| Key needed | No | Open-access endpoint `open.er-api.com`: no. Registered free key: yes |
+| Daily cap | **None.** Maintainer, discussion #42: "Short answer, there are no limits." Abuse rate-limiting only | Open endpoint is rate-limited with no stated daily number. Docs: request once per 24 h and you never need worry; hourly "and never get rate limited". Registered free key: 1,500 calls/**month** (~48/day) |
+| Data refresh | Central-bank daily sources (ECB et al.) | Once per day (open endpoint) |
+| Currencies | Fewer (ECB-derived core set; the repo now also mentions a `/v2` API with more providers) | 160+, MNT expected |
+| Unknowns | **Whether MNT is published at all** - unread. Whether `/v1` or `/v2` is current | Response shape, `time_next_update_unix` semantics, attribution terms |
+
+Decisions already made for when this is built (so they are not
+re-litigated):
+
+- Neither is a bank quote. Each publishes a single mid/reference rate,
+  so quotes are `channel: "reference"`, `side: "reference"` - the same
+  as the Bank of Mongolia (invariants 2 and 3). No buy/sell spread is
+  ever synthesised.
+- A rate MNT does not appear in the source's own payload is **not**
+  derived by crossing through USD. That would be inference, not
+  publication. If Frankfurter carries no MNT, it ships with no MNT
+  quotes rather than computed ones.
+- Both must use `json_exact`/`parse_decimal` - no floats - and their
+  payload hash must strip volatile keys.
+- Call budget is a hard guard in code, not only a cron cadence: a
+  per-source daily ledger that refuses to fetch past a configured
+  ceiling, and honours the source's own next-update time if it states
+  one. Target: well under the limits above, e.g. ExchangeRate-API at
+  most once every 6 h (4/day).
+- Quote direction: MNT per 1 unit of foreign currency, matching every
+  bank quote. Both APIs return "units of X per 1 base", so the
+  inversion `1 / rate` must be done in `Decimal` with a fixed,
+  documented precision and recorded in the source's `evidence`.
+- Logos: fetched by a script/job, stored as static files we host and
+  served by absolute URL - never hot-linked to the bank's site, whose
+  URL can change. Not built.
+
+**Unblock:** add these hosts to the environment's allowed domains (or
+raise Network access): `api.frankfurter.dev`, `frankfurter.dev`,
+`open.er-api.com`, `www.exchangerate-api.com`, and the 15 bank hosts
+in `app/config.py` (plus `send.mn`, the current SendMN site).
 
 **Not done / known gaps**
 

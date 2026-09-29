@@ -54,6 +54,7 @@ class TestEnvelope:
         assert set(source) == {
             "id",
             "name",
+            "name_mn",
             "type",
             "status",
             "fetched_at",
@@ -62,6 +63,7 @@ class TestEnvelope:
             "quotes",
         }
         assert source["name"] == "Khan Bank"
+        assert source["name_mn"] == "Хаан Банк"
         assert source["type"] == "commercial_bank"
         assert source["status"] in {"ok", "stale", "failing"}
         assert ISO_Z.match(source["fetched_at"])

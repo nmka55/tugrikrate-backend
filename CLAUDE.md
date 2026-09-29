@@ -103,6 +103,17 @@ Read `ARCHITECTURE.md` first — it carries the why behind all of this.
   cannot be confirmed ships `verified: false`. Do not widen
   `UNVERIFIED_BASIS_CURRENCIES` down to a guess, or narrow it without
   re-running the probe.
+- **Source names are evidence-based.** `name` / `name_mn` /
+  `name_evidence` in the registry are pinned by
+  `tests/test_source_names.py`. Do not "tidy" or re-translate them
+  (TransBank's Mongolian name is `Тээвэр Хөгжлийн Банк`, not a phonetic
+  `Транс Банк`). Change one only with new evidence, in the registry,
+  the test table and ARCHITECTURE.md together.
+- **Pending, blocked on network:** international sources (Frankfurter,
+  ExchangeRate-API) and source logos are designed but **not built** -
+  read ARCHITECTURE.md §6 before touching either; the decisions there
+  (reference channel only, no USD cross-rates, hard call-budget guard)
+  are settled.
 - **Line length is 79** (`pyproject.toml`), not black's default 88.
 - **`target-version` is pinned to `py313`** even though the Dockerfile
   runs 3.14. Deliberate, inherited from upstream: Black targeting

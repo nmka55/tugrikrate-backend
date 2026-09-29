@@ -46,6 +46,7 @@ response is 15 sources, 43 currencies, ~587 quotes):
     {
       "id": "khanbank",
       "name": "Khan Bank",
+      "name_mn": "Хаан Банк",
       "type": "commercial_bank",
       "status": "ok",
       "fetched_at": "2026-09-29T03:55:39Z",
@@ -61,6 +62,7 @@ response is 15 sources, 43 currencies, ~587 quotes):
     {
       "id": "mongolbank",
       "name": "Bank of Mongolia",
+      "name_mn": "Монгол Банк",
       "type": "central_bank",
       "status": "ok",
       "fetched_at": "2026-09-29T03:55:45Z",
@@ -73,6 +75,7 @@ response is 15 sources, 43 currencies, ~587 quotes):
     {
       "id": "sendmn",
       "name": "SendMN",
+      "name_mn": "Сэнд Эм Эн ББСБ",
       "type": "remittance",
       "status": "ok",
       "fetched_at": "2026-09-29T03:55:42Z",
@@ -151,7 +154,14 @@ today, but don't hardcode that — the conversion is
 set when the source itself states when it published. Null means the
 source doesn't say — don't substitute `fetched_at` for it.
 
-**9. Timestamps are UTC with a `Z` suffix.** Use an ISO8601 decoding
+**9. Every source has an English `name` and a Mongolian `name_mn`.**
+Show `name_mn` when the app language is Mongolian and `name`
+otherwise. Both are always present and non-empty. They are the
+institutions' own official names, so do not re-translate or "tidy"
+them (e.g. TransBank is `Тээвэр Хөгжлийн Банк` in Mongolian, not a
+phonetic `Транс Банк`).
+
+**10. Timestamps are UTC with a `Z` suffix.** Use an ISO8601 decoding
 strategy; `.iso8601` works for these.
 
 ## Caching — please implement this

@@ -79,7 +79,13 @@ class QuoteOut(BaseModel):
 
 class SourceOut(BaseModel):
     id: str = Field(examples=["khanbank"])
-    name: str = Field(examples=["Khan Bank"])
+    name: str = Field(
+        description="Official English name.", examples=["Khan Bank"]
+    )
+    name_mn: str = Field(
+        description="Official Mongolian (Cyrillic) name.",
+        examples=["Хаан Банк"],
+    )
     type: str = Field(examples=["commercial_bank"])
     status: str = Field(
         description=(
@@ -147,6 +153,7 @@ def _build_payload(
             SourceOut(
                 id=spec.id,
                 name=spec.name,
+                name_mn=spec.name_mn,
                 type=spec.type,
                 status=compute_status(
                     spec, snapshot, states.get(spec.id), now
@@ -175,6 +182,8 @@ def _etag(payload: RatesResponse) -> str:
     digest = hashlib.sha256()
     for source in payload.sources:
         digest.update(source.id.encode())
+        digest.update(source.name.encode())
+        digest.update(source.name_mn.encode())
         digest.update(source.status.encode())
         digest.update(str(source.fetched_at).encode())
         for quote in source.quotes:
@@ -238,6 +247,7 @@ def get_sources():
                 "id": spec.id,
                 "name": spec.name,
                 "name_mn": spec.name_mn,
+                "name_evidence": spec.name_evidence,
                 "type": spec.type,
                 "cadence": spec.cadence,
                 "channels": sorted(spec.channels),
@@ -275,7 +285,12 @@ def get_history(
 
     return {
         "schema_version": SCHEMA_VERSION,
-        "source": {"id": spec.id, "name": spec.name, "type": spec.type},
+        "source": {
+            "id": spec.id,
+            "name": spec.name,
+            "name_mn": spec.name_mn,
+            "type": spec.type,
+        },
         "snapshots": [
             {
                 "fetched_at": _iso_z(row.fetched_at),

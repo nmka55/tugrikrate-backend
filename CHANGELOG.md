@@ -2,6 +2,24 @@
 
 # Өөрчлөлтийн Түүх
 
+## [Unreleased]
+
+### Added
+
+- `name_mn` (official Mongolian name) on every source in
+  `GET /v1/rates` and `/v1/rates/{id}/history`; `name_evidence` on
+  `/v1/sources`. Additive, `schema_version` remains 1.
+
+### Changed
+
+- Source names corrected to each institution's own official form:
+  TransBank is `Тээвэр Хөгжлийн Банк` in Mongolian (was `Транс Банк`);
+  `State Bank` -> `State Bank of Mongolia`; `Trade and Development
+  Bank` -> `... of Mongolia`; `National Investment Bank` -> `... of
+  Mongolia`; `Хас Банк` -> `ХасБанк`; `М Банк` -> `М банк`; Naiman
+  Sharga and SendMN Mongolian names. Evidence in ARCHITECTURE.md §5.
+- The ETag now covers source names, so a rename reaches cached clients.
+
 ## [2.0.0] - 2026-09-29
 
 Fork of [btseee/mongolian-bank-exchange-rate](https://github.com/btseee/mongolian-bank-exchange-rate)
