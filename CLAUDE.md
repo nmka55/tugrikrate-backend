@@ -109,15 +109,15 @@ Read `ARCHITECTURE.md` first — it carries the why behind all of this.
   (TransBank's Mongolian name is `Тээвэр Хөгжлийн Банк`, not a phonetic
   `Транс Банк`). Change one only with new evidence, in the registry,
   the test table and ARCHITECTURE.md together.
-- **Conversion policy is the owner's binding requirement** - read
-  ARCHITECTURE.md "Conversion policy" before touching rates, `/v1/fx`
-  or the mobile brief. In one breath: foreign↔foreign uses the
-  international table only (never MNT), always pivoting **X → USD → Y**
-  - the server downloads only USD-based rates, never per pair (owner
-  confirmed; an all-pairs table is infeasible); with MNT it is the chosen
-  bank → Bank of Mongolia → Bank of Mongolia's USD rate plus the
-  international USD leg; always say which tier was used. The app
-  implements it; the backend only serves the inputs.
+- **Conversion and its fallback between sources are the app's job, not
+  the backend's** (owner's decision). Do not add a `/convert` endpoint
+  or backend fallback logic, and do not restate the fallback order in
+  backend docs: it lives only in `docs/mobile-integration-prompt.md`
+  rule 11. The backend serves inputs under one rule: **USD is the
+  pivot** - the server downloads only USD-based rates from foreign
+  sources, never per pair (owner confirmed; an all-pairs table is
+  infeasible), and the app computes X → USD → Y. See ARCHITECTURE.md
+  "Conversion: what the backend does and does not do".
 - **Frankfurter is source #16, a USD table, and not a bank.** It lives
   in `app/crawlers/frankfurter.py` but is deliberately *not* in
   `HTTP_CRAWLERS`, keeping `crawlers/__init__.py` upstream-identical.

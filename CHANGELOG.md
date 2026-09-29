@@ -8,16 +8,14 @@
 
 - **Frankfurter** as a 16th source (`type: "international_aggregator"`)
   and a new endpoint, **`GET /v1/fx`**: a USD-based foreign-exchange
-  table (160 currencies, units of each per 1 USD, no MNT) for converting
-  foreign↔foreign and for the USD leg of the fallback in ARCHITECTURE.md
-  "Conversion policy". Uses Frankfurter `/v2` (`/v1` has no MNT). One
+  table (160 currencies, units of each per 1 USD, no MNT), the input the
+  app needs for foreign↔foreign conversion via USD. Uses Frankfurter `/v2` (`/v1` has no MNT). One
   request per fetch, **4 fetches a day** (00/06/12/18 Ulaanbaatar), with
   a 4-request daily ceiling that the scheduler checks at startup. New
   config: `INTL_CRAWLS_PER_DAY`, `INTL_DAILY_CALL_LIMIT`,
   `FRANKFURTER_CURRENCIES`, `FRANKFURTER_URI`. It is deliberately not on
   `/v1/rates`, whose `rate` always means MNT per unit.
 - `kind` (`mnt_rates` | `usd_table`) on `/v1/sources`.
-- The owner's conversion policy, recorded as a requirement.
 - `logo_url` on every source in `GET /v1/rates` and `/v1/sources`
   (null for Naiman Sharga, whose logo provenance could not be
   established). Logos are hosted at `/static/logos/` with a provenance
@@ -57,6 +55,9 @@
 - Foreign↔foreign conversion pivots through USD (X → USD → Y); only
   USD-based tables are downloaded, never per-pair rates. Confirmed by
   the owner.
+- Conversion and the fallback between sources are done by the iOS app,
+  not the backend; the rules live only in
+  `docs/mobile-integration-prompt.md` (rule 11).
 - fxratesapi.com assessed: usable only if `/v1/fx` is restricted to our
   own app (it is public today). Not added yet. See ARCHITECTURE.md §5.
 

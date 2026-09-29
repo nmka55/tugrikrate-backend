@@ -1,7 +1,7 @@
 """GET /v1/fx - the foreign-exchange table, with no MNT in it.
 
-This is the half of the conversion policy that never touches a
-Mongolian rate: foreign to foreign, and the USD leg of the fallback.
+The input the app needs to convert foreign to foreign through USD. The
+backend only serves the table; conversion itself is the app's job.
 """
 
 import json

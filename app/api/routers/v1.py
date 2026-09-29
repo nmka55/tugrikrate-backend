@@ -501,11 +501,11 @@ def get_fx(
     another, with no MNT and no Mongolian bank involved.
 
     Every rate is how many units of `currency` one US dollar buys.
-    USD to X is `rate`; X to USD is `1 / rate`; X to Y (neither USD) is
-    `rate_Y / rate_X`, using both rates from the **same source** so they
-    come from one snapshot. The same table supplies the USD leg when a
-    Mongolian rate is missing - see "Conversion policy" in
-    ARCHITECTURE.md. Refreshed a few times a day, not every 15 minutes.
+    USD to X is `rate`; X to USD is `1 / rate`; X to Y (neither USD)
+    pivots through USD: `amount / rate_X * rate_Y`, using both rates
+    from the **same source** so they come from one snapshot. This
+    endpoint only serves the table; conversion is done by the client.
+    Refreshed a few times a day, not every 15 minutes.
     """
     source_ids = _parse_currencies(source)
     source_ids = {s.lower() for s in source_ids} if source_ids else None

@@ -2,15 +2,15 @@
 
 Not a bank, and not a source of MNT rates. It supplies what the
 Mongolian sources cannot: how many units of any currency one US dollar
-buys, so the app can convert foreign to foreign without touching MNT,
-and complete the "MNT -> USD -> currency" fallback (ARCHITECTURE.md,
-"Conversion policy").
+buys. The app uses it to convert foreign to foreign without touching
+MNT, and for its own MNT -> USD -> currency fallback (the conversion
+logic lives in the app: docs/mobile-integration-prompt.md, rule 11).
 
 One request per crawl: `GET /v2/rates?base=USD` returns every currency
 against the dollar (verified 2026-09-29: 166 rows, each `{date, base,
 quote, rate}`). This replaced an earlier design of one request per
 currency for MNT-per-unit quotes, which cost 162 requests a crawl and
-served a rate the conversion policy never uses.
+served a rate the app's conversion rules never use.
 
 The owner confirmed the design: the server downloads only USD-based
 rates, and every foreign pair is computed X -> USD -> Y by the app. A
@@ -37,8 +37,8 @@ from app.utils.call_budget import CallBudgetExceeded, DailyCallBudget
 
 BASE_CURRENCY = "USD"
 
-# MNT is excluded because the conversion policy never takes an MNT rate
-# from a foreign source. Precious metals are left to the banks that
+# MNT is excluded because MNT rates come only from Mongolian sources,
+# never from a foreign one. Precious metals are left to the banks that
 # publish them: Frankfurter prices them per troy ounce, so a dollar
 # buys ~0.0002 of one, which 5 decimal places cannot represent.
 EXCLUDED_CODES = frozenset({"MNT", "XAU", "XAG", "XPD", "XPT"})

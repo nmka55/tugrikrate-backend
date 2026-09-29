@@ -177,8 +177,10 @@ the images as the institutions' trademarks: show them only next to that
 institution's own name and rates.
 
 **11. Conversion policy - the app implements this, exactly.** It is the
-project owner's requirement (backend `ARCHITECTURE.md`, "Conversion
-policy"); do not substitute another source for a step.
+project owner's requirement, and **this section is its only
+specification**: the backend deliberately does no conversion and no
+fallback, it only serves the two feeds below. Do not substitute another
+source for a step, and do not expect a `/convert` endpoint.
 
 Two endpoints supply the inputs:
 
@@ -242,14 +244,14 @@ show the user which one was used:**
 
 Do all arithmetic in `Decimal`; the international rates carry ~5
 significant digits, so foreign results are indicative to roughly
-0.01-0.05 %, fine for a converter and not for settlement. Tier 2 and 3
+0.01-0.05 %, fine for a converter and not for settlement. Step 2 and 3
 figures are reference values: **do not present them as rates the user
 can transact at.** When the user is actually exchanging cash, use a
 bank's `cash` quotes.
 
-**Not yet confirmed by the owner:** whether tier 1 → 2 happens when the
-*chosen* bank lacks X (assumed here) or only when *no* bank has it.
-Build the tier logic so that is a one-line change.
+**Open question for the owner (decide in the app):** whether step 1 → 2
+happens when the *chosen* bank lacks X (assumed here) or only when *no*
+bank has it. Build the step logic so that is a one-line change.
 
 **12. `type` is non-exhaustive.** Now one of `commercial_bank`,
 `central_bank`, `exchange_bureau`, `remittance`,

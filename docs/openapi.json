@@ -145,7 +145,7 @@
           "v1"
         ],
         "summary": "Foreign-exchange table: units of each currency per 1 USD",
-        "description": "International rates for converting one **foreign** currency into\nanother, with no MNT and no Mongolian bank involved.\n\nEvery rate is how many units of `currency` one US dollar buys.\nUSD to X is `rate`; X to USD is `1 / rate`; X to Y (neither USD) is\n`rate_Y / rate_X`, using both rates from the **same source** so they\ncome from one snapshot. The same table supplies the USD leg when a\nMongolian rate is missing - see \"Conversion policy\" in\nARCHITECTURE.md. Refreshed a few times a day, not every 15 minutes.",
+        "description": "International rates for converting one **foreign** currency into\nanother, with no MNT and no Mongolian bank involved.\n\nEvery rate is how many units of `currency` one US dollar buys.\nUSD to X is `rate`; X to USD is `1 / rate`; X to Y (neither USD)\npivots through USD: `amount / rate_X * rate_Y`, using both rates\nfrom the **same source** so they come from one snapshot. This\nendpoint only serves the table; conversion is done by the client.\nRefreshed a few times a day, not every 15 minutes.",
         "operationId": "get_fx_v1_fx_get",
         "parameters": [
           {

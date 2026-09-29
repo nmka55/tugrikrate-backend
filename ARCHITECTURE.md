@@ -72,70 +72,47 @@ correctness bug, not a style question.
    does not publish that number. They never become a value, and a
    missing quote is *absent* from the response rather than null.
 
-## Conversion policy (product requirement)
+## Conversion: what the backend does and does not do
 
-Stated by the project owner on 2026-09-29 and **binding**: it decides
-which rates the app converts with. Do not "improve" it by routing a
-conversion through a different source than it names.
+**Owner's decision (2026-09-29): all conversion logic, including the
+fallback between sources, lives in the mobile app.** The backend does
+not convert, has no `/convert` endpoint, and does not specify or test
+the fallback order. The app-side rules (which source to use when MNT
+is involved, in which order, how to label the result) are written in
+one place only: `docs/mobile-integration-prompt.md`, rule 11. Do not
+copy them back here; if they change, they change there.
 
-**Foreign to foreign** (neither currency is MNT), e.g. JPY→USD,
-KZT→CNY: use the **international source only** (`GET /v1/fx`). No MNT,
-no Mongolian bank, no Bank of Mongolia is involved.
+What the backend owns is the **inputs**, and one rule constrains them:
 
-**USD is the pivot - confirmed by the owner (2026-09-29).** The server
-downloads *only* USD-based rates from a foreign source: one table of
-"units of X per 1 USD". Every foreign pair goes **X → USD → Y**. Rates
-are never downloaded per pair: a direct table for every pair on the
+**USD is the pivot - confirmed by the owner.** The server downloads
+*only* USD-based rates from foreign sources: one table of "units of X
+per 1 USD". A foreign pair is computed by the app as **X → USD → Y**.
+Rates are never downloaded per pair: a table for every pair on the
 planet is ~160² ≈ 25,600 rates - infeasible to fetch, store or keep
-fresh, and (measured) *less* precise than the pivot anyway.
+fresh, and (measured) *less* precise than the pivot anyway (§5, "Why
+Frankfurter is a USD table").
 
-- USD→X is the table's rate; X→USD is `1 / rate`.
-- X→Y with neither USD: X→USD then USD→Y, i.e.
-  `amount ÷ rate_X × rate_Y` - both rates from the **same source's same
-  snapshot**. Example, KZT→CNY: `amount ÷ 441.22 × 6.71`.
-- A foreign source is acceptable only if it can serve that USD table
-  in one request; anything that needs a request per currency or per
+The backend therefore serves two feeds, kept apart because their
+`rate` means different things:
+
+| Endpoint | Sources | `rate` means |
+| --- | --- | --- |
+| `GET /v1/rates` | the 15 Mongolian sources | MNT per `unit_basis` units |
+| `GET /v1/fx` | international (Frankfurter) | units of `currency` per 1 USD, no MNT |
+
+Consequences for the backend:
+
+- A foreign source is acceptable only if it serves the whole USD table
+  in **one request**; anything needing a request per currency or per
   pair breaks the 4-a-day ceiling.
+- Foreign sources never contribute MNT rates: Frankfurter's MNT row is
+  dropped (MNT comes from Mongolian sources, and Frankfurter's MNT is
+  largely a copy of the Bank of Mongolia's anyway, §5).
+- The two feeds are never merged into one response
+  (`tests/test_fx.py::TestSeparationFromMntRates`).
 
-**MNT involved** (the other currency is X), in this order:
+**Still awaiting the owner's confirmation:**
 
-1. **The Mongolian bank's own quote** for X. `X→MNT` uses the bank's
-   `buy`, `MNT→X` its `sell` (sides are the bank's perspective).
-2. If that bank does not quote X: the **Bank of Mongolia reference rate**
-   for X (`mongolbank`, channel `reference`, used for both directions -
-   it has no spread).
-3. If the Bank of Mongolia does not have X either: go **through USD**.
-   `MNT↔USD` at the Bank of Mongolia's USD rate, then `USD↔X` from the
-   international table.
-   `X→MNT = amount ÷ rate_X × BoM_USD` ·
-   `MNT→X = amount ÷ BoM_USD × rate_X`.
-
-Rules that follow from it:
-
-- **Say which tier was used.** The app must show the user the basis
-  (bank / Bank of Mongolia / Bank of Mongolia via USD / international
-  table). A tier-3 number is a composed estimate, not a rate anyone
-  quotes, and must not look like one. Tier-2 and tier-3 numbers are
-  reference figures, not transactable rates.
-- **All arithmetic in `Decimal`; round only for display.**
-- The international table never supplies a rate to tiers 1 or 2, and is
-  never used for MNT except as the USD↔X leg of tier 3.
-- Frankfurter's own MNT figures are deliberately **not** served: the
-  policy takes MNT rates from Mongolian sources only, and Frankfurter's
-  MNT is largely a copy of the Bank of Mongolia's anyway (§5).
-
-Where it lives: the conversion itself is done **by the app**
-(`docs/mobile-integration-prompt.md` has the algorithm and the edge
-cases). The backend supplies the inputs - `/v1/rates` for tiers 1-2,
-`/v1/rates` (Bank of Mongolia USD) plus `/v1/fx` for tier 3, `/v1/fx`
-alone for foreign↔foreign - and exposes no `/convert` endpoint.
-
-**Interpretations still awaiting the owner's confirmation:**
-
-- *Which bank in tier 1.* Read as "the bank the user chose": if **that**
-  bank lacks X, fall to the Bank of Mongolia, not to another bank. The
-  other reading ("only if no bank has X") would need the app to search
-  all 15 banks first.
 - *"4 times a day".* Applied to the international source only. The
   banks are unchanged (every 15 min during 08:00-20:00 Ulaanbaatar,
   hourly otherwise); their freshness matters to a converter and they
@@ -304,8 +281,8 @@ Everything below was read off the live API on 2026-09-29, not assumed.
 
 **History of this decision (kept because it was reversed).** The first
 build fetched `base=X&quotes=MNT` once per currency (162 requests a
-crawl, MNT per unit, on `/v1/rates`). The owner's conversion policy
-(above) then made that wrong twice over: MNT rates come from Mongolian
+crawl, MNT per unit, on `/v1/rates`). The owner's conversion rules
+then made that wrong twice over: MNT rates come from Mongolian
 sources, and foreign↔foreign must not involve MNT at all. It was
 replaced by a single `GET /v2/rates?base=USD`. Requests per day fell
 from ~324 to 4.
@@ -331,7 +308,8 @@ from ~324 to 4.
 
   The direct pair is never better; where it differs, it is the
   rounded one. Together with the size of an all-pairs table, this is
-  why the owner confirmed the USD pivot (see Conversion policy).
+  why the owner confirmed the USD pivot (see "Conversion: what the
+  backend does and does not do").
 - **Reference, not a market rate.** One blended mid figure per
   currency; no buy/sell, no channel. Modelled as the `usd_table`
   channel (`app/sources/models.py`), a *different meaning of `rate`*
@@ -488,6 +466,26 @@ Housekeeping signal: its docs "Request Pricing" page is an unedited
 template from a PDF-conversion product ("create more PDFs"). Low effort
 on docs; weigh accordingly.
 
+**To adopt it - who does what:**
+
+1. *Owner:* create a free account at fxratesapi.com and generate a key
+   on its dashboard (`/app/tokens`). The API takes it as
+   `?api_key=...` or `Authorization: Bearer ...`; the backend will use
+   the header so the key never appears in logged URLs.
+2. *Owner:* store the key as a **secret environment variable**
+   (`FXRATESAPI_KEY`) - in the cloud dev environment's settings and on
+   the production host. Never in the repo, and never pasted into chat.
+3. *Owner (recommended before launch):* email support@fxratesapi.com
+   describing the use - rates fetched 4×/day by our backend, cached,
+   shown only inside our iOS app for personal reference, no
+   redistribution - and keep the written reply.
+4. *Backend (this repo), before any of its data is served:* app
+   authentication on `/v1/fx` (condition 1), keep its snapshots out of
+   every public history endpoint (condition 2), then the crawler: one
+   `GET /latest?base=USD` per fetch, same 4-a-day budget, `usd_table`
+   channel, missing key = source disabled rather than falling back to
+   the keyless public plan.
+
 ### Why logos are hosted copies with recorded provenance
 
 - **Hosted, not hot-linked.** Bank sites change URLs without notice and
@@ -633,6 +631,15 @@ read; nothing above was assumed.
       ExchangeRate-API data).
 - [x] 329 tests; isort/black/ruff clean.
 
+**2026-09-29 (night) - conversion logic handed to the app.**
+
+- [x] Owner decided the fallback between sources is **app-only**. The
+      tier rules were removed from this document and live only in
+      `docs/mobile-integration-prompt.md` rule 11; this document keeps
+      only what constrains the backend (USD pivot, two separate feeds).
+      No code changed - the backend never implemented the tiers.
+- [x] fxratesapi.com onboarding steps recorded (§5).
+
 **Not done / known gaps**
 
 - [ ] **The iOS app is not connected yet.** No client exists.
@@ -646,10 +653,9 @@ read; nothing above was assumed.
       snapshots, a registered key, and ideally written confirmation.
       `fawazahmed0/exchange-api` (CC0) remains a candidate pending a
       provenance check.
-- [ ] **The conversion policy is not implemented anywhere yet.** The
-      backend serves the inputs; the iOS app must implement the tiers.
-      Two interpretations await the owner's confirmation (which bank
-      in tier 1; whether "4 a day" also covers the banks).
+- [ ] **Conversion is not implemented anywhere yet** - it is the iOS
+      app's job (mobile brief, rule 11). Backend-side, one question is
+      open: whether "4 a day" also covers the banks.
 - [ ] **Frankfurter licence not audited per provider** (§5).
 - [ ] **Bank sites were spot-checked, not all crawled from the sandbox.**
       Khan Bank blocks datacenter IPs and NIB's certificate chain does
