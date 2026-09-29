@@ -15,8 +15,8 @@ from app.sources.registry import BY_ID
 ISO_Z = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 
-def seed_fx(db, rates=None, **kwargs):
-    spec = BY_ID["frankfurter"]
+def seed_fx(db, rates=None, source_id="frankfurter", **kwargs):
+    spec = BY_ID[source_id]
     rates = rates or {"KZT": "441.22", "EUR": "0.8782", "JPY": "157.25"}
     result = CrawlResult(
         source_id=spec.id,
@@ -27,7 +27,114 @@ def seed_fx(db, rates=None, **kwargs):
         payload=b'{"x":1}',
         **kwargs,
     )
-    repo.record_success(db, spec, result, "hash-fx")
+    repo.record_success(db, spec, result, f"hash-fx-{source_id}")
+
+
+class TestRestrictedSources:
+    """fxRatesAPI's licence allows its data only inside our own app
+    (ARCHITECTURE.md §5). These pin that it never leaks."""
+
+    APP_KEY = "the-app-key"
+
+    def enable(self, monkeypatch, app_keys=(APP_KEY,)):
+        from app.config import config
+
+        monkeypatch.setattr(config, "FXRATESAPI_KEY", "provider-key")
+        monkeypatch.setattr(config, "APP_API_KEYS", list(app_keys))
+
+    def ids(self, client, **headers):
+        body = client.get("/v1/fx", headers=headers).json()
+        return {s["id"] for s in body["sources"]}
+
+    def test_with_the_app_key_it_is_served(self, client, test_db, monkeypatch):
+        self.enable(monkeypatch)
+        seed_fx(test_db, source_id="fxratesapi")
+        assert self.ids(client, **{"X-App-Key": self.APP_KEY}) == {
+            "frankfurter",
+            "fxratesapi",
+        }
+
+    def test_without_a_key_it_is_absent_not_an_error(
+        self, client, test_db, monkeypatch
+    ):
+        self.enable(monkeypatch)
+        seed_fx(test_db, source_id="fxratesapi")
+        response = client.get("/v1/fx")
+        assert response.status_code == 200
+        assert {s["id"] for s in response.json()["sources"]} == {"frankfurter"}
+
+    def test_a_wrong_key_is_treated_as_no_key(
+        self, client, test_db, monkeypatch
+    ):
+        self.enable(monkeypatch)
+        seed_fx(test_db, source_id="fxratesapi")
+        assert self.ids(client, **{"X-App-Key": "guess"}) == {"frankfurter"}
+
+    def test_no_configured_app_keys_serves_it_to_nobody(
+        self, client, test_db, monkeypatch
+    ):
+        """Fail closed: an empty APP_API_KEYS must not mean 'open'."""
+        self.enable(monkeypatch, app_keys=())
+        seed_fx(test_db, source_id="fxratesapi")
+        assert self.ids(client, **{"X-App-Key": ""}) == {"frankfurter"}
+        assert self.ids(client, **{"X-App-Key": "anything"}) == {"frankfurter"}
+
+    def test_without_its_provider_key_it_is_not_listed(
+        self, client, test_db, monkeypatch
+    ):
+        from app.config import config
+
+        monkeypatch.setattr(config, "APP_API_KEYS", [self.APP_KEY])
+        assert self.ids(client, **{"X-App-Key": self.APP_KEY}) == {
+            "frankfurter"
+        }
+
+    def test_rotation_accepts_any_configured_key(
+        self, client, test_db, monkeypatch
+    ):
+        self.enable(monkeypatch, app_keys=("old", "new"))
+        seed_fx(test_db, source_id="fxratesapi")
+        for key in ("old", "new"):
+            assert "fxratesapi" in self.ids(client, **{"X-App-Key": key})
+
+    def test_restricted_responses_are_private_to_caches(
+        self, client, test_db, monkeypatch
+    ):
+        self.enable(monkeypatch)
+        seed_fx(test_db, source_id="fxratesapi")
+        keyed = client.get("/v1/fx", headers={"X-App-Key": self.APP_KEY})
+        public = client.get("/v1/fx")
+
+        assert keyed.headers["cache-control"].startswith("private")
+        assert public.headers["cache-control"].startswith("public")
+        assert "X-App-Key" in keyed.headers["vary"]
+        # Different content, different validator.
+        assert keyed.headers["etag"] != public.headers["etag"]
+
+    def test_it_has_no_history_even_for_the_app(
+        self, client, test_db, monkeypatch
+    ):
+        self.enable(monkeypatch)
+        seed_fx(test_db, source_id="fxratesapi")
+        path = "/v1/rates/fxratesapi/history"
+        assert client.get(path).status_code == 404
+        assert (
+            client.get(path, headers={"X-App-Key": self.APP_KEY}).status_code
+            == 404
+        )
+
+    def test_unrestricted_history_still_works(self, client, test_db):
+        seed_fx(test_db)
+        assert client.get("/v1/rates/frankfurter/history").status_code == 200
+
+    def test_sources_endpoint_flags_it(self, client):
+        sources = {
+            s["id"]: s["restricted"]
+            for s in client.get("/v1/sources").json()["sources"]
+        }
+        assert sources["fxratesapi"] is True
+        assert sources["frankfurter"] is False
+        assert sources["khanbank"] is False
 
 
 class TestEnvelope:

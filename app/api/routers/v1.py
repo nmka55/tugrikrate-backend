@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, field_serializer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.dependencies import is_app_request
 from app.config import config
 from app.db import snapshots as snapshot_repo
 from app.db.database import get_db
@@ -230,6 +231,14 @@ class SourceInfoOut(BaseModel):
         ),
         examples=["mnt_rates"],
     )
+    restricted: bool = Field(
+        description=(
+            "True when the source's licence allows its data only inside "
+            "the TugrikRate app: served on /v1/fx only with X-App-Key, "
+            "and it has no history endpoint."
+        ),
+        examples=[False],
+    )
     channels: list[str] = Field(examples=[["cash", "noncash"]])
     evidence: str = Field(
         description="How each channel/side label was confirmed."
@@ -405,6 +414,7 @@ def _build_fx(
     currencies: set[str] | None,
     source_ids: set[str] | None,
     base_url: str = "",
+    app_request: bool = False,
 ) -> FxResponse:
     latest = snapshot_repo.latest_snapshots(db)
     states = snapshot_repo.source_states(db)
@@ -413,6 +423,12 @@ def _build_fx(
     sources = []
     for spec in FX_SPECS:
         if source_ids and spec.id not in source_ids:
+            continue
+        # Not configured: it has never run, so there is nothing to say.
+        if not spec.configured:
+            continue
+        # Licence-restricted data goes to our app only (ARCHITECTURE §5).
+        if spec.restricted and not app_request:
             continue
         snapshot = latest.get(spec.id)
         sources.append(
@@ -495,6 +511,7 @@ def get_fx(
         description="Comma-separated source ids",
         examples=["frankfurter"],
     ),
+    app_request: bool = Depends(is_app_request),
     db: Session = Depends(get_db),
 ):
     """International rates for converting one **foreign** currency into
@@ -506,15 +523,27 @@ def get_fx(
     from the **same source** so they come from one snapshot. This
     endpoint only serves the table; conversion is done by the client.
     Refreshed a few times a day, not every 15 minutes.
+
+    Sources whose licence restricts them to our own app (fxratesapi)
+    appear only when the request carries a valid `X-App-Key`; without
+    it they are simply absent, not an error.
     """
     source_ids = _parse_currencies(source)
     source_ids = {s.lower() for s in source_ids} if source_ids else None
     base_url = _base_url(request)
-    payload = _build_fx(db, _parse_currencies(currency), source_ids, base_url)
+    payload = _build_fx(
+        db, _parse_currencies(currency), source_ids, base_url, app_request
+    )
 
     etag = _fx_etag(payload, base_url)
     response.headers["ETag"] = etag
-    response.headers["Cache-Control"] = "public, max-age=300"
+    # A response carrying restricted data must never be stored by a
+    # shared cache and handed to someone without the key.
+    restricted = any(BY_ID[s.id].restricted for s in payload.sources)
+    response.headers["Cache-Control"] = (
+        "private, max-age=300" if restricted else "public, max-age=300"
+    )
+    response.headers["Vary"] = "X-App-Key"
     if request.headers.get("if-none-match") == etag:
         return Response(status_code=304, headers=dict(response.headers))
     return payload
@@ -544,6 +573,7 @@ def get_sources(request: Request):
                 "type": spec.type,
                 "cadence": spec.cadence,
                 "kind": spec.kind,
+                "restricted": spec.restricted,
                 "channels": sorted(spec.channels),
                 "evidence": spec.evidence,
             }
@@ -569,7 +599,9 @@ def get_history(
     payload do not create entries, they move `last_checked_at`.
     """
     spec = BY_ID.get(source_id.lower())
-    if spec is None:
+    # A restricted source's licence forbids archiving or redistributing
+    # its data, so it has no history here - not even for our own app.
+    if spec is None or spec.restricted:
         raise HTTPException(404, f"unknown source: {source_id}")
 
     rows = db.scalars(

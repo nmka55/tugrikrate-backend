@@ -37,9 +37,15 @@ OFFICIAL_NAMES = {
     "transbank": ("TransBank", "Тээвэр Хөгжлийн Банк"),
     # A foreign service: the Mongolian name is a transliteration.
     "frankfurter": ("Frankfurter", "Франкфуртер"),
+    # A foreign service with a Latin wordmark; kept as-is (see evidence).
+    "fxratesapi": ("fxRatesAPI", "fxRatesAPI"),
 }
 
 CYRILLIC = re.compile(r"[А-Яа-яЁёӨөҮү]")
+
+# Sources whose Mongolian display name is deliberately left in Latin
+# script. Each must say so in its name_evidence.
+LATIN_BRAND_NAMES = {"fxratesapi"}
 
 
 def test_pinned_table_covers_every_source():
@@ -61,6 +67,9 @@ def test_every_source_has_both_names_and_evidence(spec):
 
 @pytest.mark.parametrize("spec", SPECS, ids=lambda s: s.id)
 def test_mongolian_name_is_cyrillic(spec):
+    if spec.id in LATIN_BRAND_NAMES:
+        assert "no Mongolian name" in spec.name_evidence
+        return
     assert CYRILLIC.search(spec.name_mn), f"{spec.id}: {spec.name_mn!r}"
 
 
@@ -69,9 +78,13 @@ def test_names_are_unique():
     assert len({s.name_mn for s in SPECS}) == len(SPECS)
 
 
-def test_names_reach_the_feeds(client, test_db):
+def test_names_reach_the_feeds(client, test_db, monkeypatch):
+    from app.config import config
+
+    monkeypatch.setattr(config, "FXRATESAPI_KEY", "k")
+    monkeypatch.setattr(config, "APP_API_KEYS", ["app"])
     rates = client.get("/v1/rates").json()["sources"]
-    fx = client.get("/v1/fx").json()["sources"]
+    fx = client.get("/v1/fx", headers={"X-App-Key": "app"}).json()["sources"]
     feed = {s["id"]: (s["name"], s["name_mn"]) for s in rates + fx}
     assert feed == OFFICIAL_NAMES
 

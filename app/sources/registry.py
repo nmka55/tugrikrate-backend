@@ -18,6 +18,7 @@ quote ships `verified: false` rather than a guess.
 from dataclasses import dataclass, field
 from decimal import Decimal
 
+from app.config import config
 from app.crawlers import (
     TDBM,
     ArigBank,
@@ -36,6 +37,7 @@ from app.crawlers import (
     XacBank,
 )
 from app.crawlers.frankfurter import Frankfurter
+from app.crawlers.fxratesapi import FxRatesApi
 from app.sources.models import (
     CHANNEL_CASH,
     CHANNEL_NONCASH,
@@ -128,10 +130,24 @@ class SourceSpec:
     # legitimately lags longer (weekends, provider holidays).
     published_stale_hours: int | None = None
     kind: str = KIND_MNT_RATES
+    # True when the source's licence allows showing its data only inside
+    # our own app (fxratesapi). Such a source is served solely to
+    # requests with a valid X-App-Key, and never through any history
+    # endpoint. See ARCHITECTURE.md §5.
+    restricted: bool = False
+    # Name of a config attribute that must be non-empty for this source
+    # to run at all (its API key). Unset -> never scheduled, never served.
+    requires_config: str | None = None
 
     @property
     def channels(self) -> frozenset[str]:
         return frozenset(slot.channel for slot in self.slots)
+
+    @property
+    def configured(self) -> bool:
+        if self.requires_config is None:
+            return True
+        return bool(getattr(config, self.requires_config, ""))
 
 
 # Four genuinely-labelled channels, the common case.
@@ -495,6 +511,40 @@ SPECS: tuple[SourceSpec, ...] = (
             "under each provider's own terms."
         ),
         published_stale_hours=96,
+    ),
+    SourceSpec(
+        id="fxratesapi",
+        name="fxRatesAPI",
+        name_mn="fxRatesAPI",
+        name_evidence=(
+            "Its Terms & Conditions page is titled 'Terms & Conditions - "
+            "fxRatesAPI' and say 'fxRatesAPI.com is a site operated by "
+            "Saritra GmbH' (Vienna, FN502707a). A foreign service with "
+            "no Mongolian name; its wordmark is Latin ('API' is an "
+            "acronym), so it is shown as-is rather than transliterated."
+        ),
+        type=TYPE_INTERNATIONAL,
+        crawler=FxRatesApi,
+        cadence=CADENCE_DAILY,
+        kind=KIND_USD_TABLE,
+        slots=(Slot("cash.buy", CHANNEL_USD_TABLE, SIDE_REFERENCE),),
+        evidence=(
+            "GET /latest?base=USD (keyed, Authorization: Bearer) returns "
+            "{success, timestamp, date, base: USD, rates: {CODE: "
+            "rate}}: units of CODE per 1 USD, one mid figure per "
+            "currency, no buy/sell, no channel. 180 codes at 10 "
+            "decimal places, updated every minute; its FAQ says rates "
+            "are 'derived from ... commercial sources, private banks "
+            "and national banks' - market-derived, unlike Frankfurter's "
+            "central-bank reference, so the two differ slightly (KZT "
+            "439.74 vs 441.22 the same day). Not published: MNT, USD, "
+            "metals, the 11 crypto codes and 9 retired currencies it "
+            "still lists. Licence: display to our own app's end users "
+            "only, hence restricted."
+        ),
+        published_stale_hours=96,
+        restricted=True,
+        requires_config="FXRATESAPI_KEY",
     ),
 )
 

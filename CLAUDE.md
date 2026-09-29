@@ -133,11 +133,20 @@ Read `ARCHITECTURE.md` first — it carries the why behind all of this.
   forbid redistribution through an API; Viv Data resells the same
   data). Do not re-add them; any replacement source must allow
   republishing through an API.
-- **fxratesapi.com is allowed only with conditions** (ARCHITECTURE.md
-  §5): its data may be shown only to our own app's end users, so
-  `/v1/fx` needs app authentication before it is added, its snapshots
-  must never appear in a public history endpoint, and it needs a
-  registered key. Do not wire it to an open endpoint.
+- **fxRatesAPI is source #17 and `restricted`** (licence: our app's
+  users only; ARCHITECTURE.md §5). A `restricted` source is served on
+  `/v1/fx` only with a valid `X-App-Key` (`APP_API_KEYS`, fail closed
+  when empty), with `Cache-Control: private`, and **never** through
+  any history endpoint - not even for the app. Never expose it
+  elsewhere, never add a keyless fallback, never put `FXRATESAPI_KEY`
+  in a URL (it goes in `Authorization: Bearer`). A wrong key still
+  returns 200 from the public plan: the crawler detects that by the
+  `x-ratelimit-limit` header, not the status. Tests never read real
+  secrets (`tests/conftest.py` blanks both keys); set one explicitly in
+  a test that needs it.
+- **`X-App-Key` is a shared secret in the app binary - a gate, not
+  proof** of a genuine install. App Attest is the upgrade path; do not
+  describe the current scheme as stronger than it is.
 - **Logos are hosted copies with provenance.** Refresh with
   `python -m scripts.fetch_logos`; never hot-link a bank. Naiman
   Sharga intentionally has none (`tests/test_logos.py::NO_LOGO`).

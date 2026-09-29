@@ -70,6 +70,20 @@
       "note": "The project's own 512px icon (its declared favicon-png).",
       "retrieved_at": "2026-09-29T13:07:42Z"
     },
+    "fxratesapi": {
+      "file": "fxratesapi.png",
+      "sha256": "c2bad830567bdaf7710049e0caea3d3fdbc5e0ba33d815dd37ded35ae788fa73",
+      "content_type": "image/png",
+      "width": 512,
+      "height": 512,
+      "bytes": 1881,
+      "origin_kind": "url",
+      "origin_url": "https://fxratesapi.com/android-chrome-512x512.png",
+      "origin_page": "https://fxratesapi.com/",
+      "publisher": "https://fxratesapi.com/",
+      "note": "The 512px icon its own site.webmanifest declares.",
+      "retrieved_at": "2026-09-29T15:17:38Z"
+    },
     "golomtbank": {
       "file": "golomtbank.jpg",
       "sha256": "dd691ac22ffafb7094bdbec52ad5f0a1895541e38c7630aa8344605d0ed667b3",

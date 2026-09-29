@@ -82,6 +82,12 @@ ORIGINS: dict[str, tuple] = {
         "https://frankfurter.dev/",
         "The project's own 512px icon (its declared favicon-png).",
     ),
+    "fxratesapi": (
+        "url",
+        "https://fxratesapi.com/android-chrome-512x512.png",
+        "https://fxratesapi.com/",
+        "The 512px icon its own site.webmanifest declares.",
+    ),
     # naimansharga: deliberately absent. Its only App Store app is
     # published by an individual (Undrakhbayar Tumenbayar), not the
     # exchange, and its website (a Wix page) declares no icon of its

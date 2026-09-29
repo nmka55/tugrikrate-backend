@@ -145,8 +145,13 @@
           "v1"
         ],
         "summary": "Foreign-exchange table: units of each currency per 1 USD",
-        "description": "International rates for converting one **foreign** currency into\nanother, with no MNT and no Mongolian bank involved.\n\nEvery rate is how many units of `currency` one US dollar buys.\nUSD to X is `rate`; X to USD is `1 / rate`; X to Y (neither USD)\npivots through USD: `amount / rate_X * rate_Y`, using both rates\nfrom the **same source** so they come from one snapshot. This\nendpoint only serves the table; conversion is done by the client.\nRefreshed a few times a day, not every 15 minutes.",
+        "description": "International rates for converting one **foreign** currency into\nanother, with no MNT and no Mongolian bank involved.\n\nEvery rate is how many units of `currency` one US dollar buys.\nUSD to X is `rate`; X to USD is `1 / rate`; X to Y (neither USD)\npivots through USD: `amount / rate_X * rate_Y`, using both rates\nfrom the **same source** so they come from one snapshot. This\nendpoint only serves the table; conversion is done by the client.\nRefreshed a few times a day, not every 15 minutes.\n\nSources whose licence restricts them to our own app (fxratesapi)\nappear only when the request carries a valid `X-App-Key`; without\nit they are simply absent, not an error.",
         "operationId": "get_fx_v1_fx_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "currency",
@@ -814,7 +819,8 @@
           "ckbank",
           "nibank",
           "transbank",
-          "frankfurter"
+          "frankfurter",
+          "fxratesapi"
         ],
         "title": "SourceId"
       },
@@ -871,6 +877,14 @@
               "mnt_rates"
             ]
           },
+          "restricted": {
+            "type": "boolean",
+            "title": "Restricted",
+            "description": "True when the source's licence allows its data only inside the TugrikRate app: served on /v1/fx only with X-App-Key, and it has no history endpoint.",
+            "examples": [
+              false
+            ]
+          },
           "channels": {
             "items": {
               "type": "string"
@@ -900,6 +914,7 @@
           "type",
           "cadence",
           "kind",
+          "restricted",
           "channels",
           "evidence"
         ],

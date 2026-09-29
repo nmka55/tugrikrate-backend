@@ -186,14 +186,36 @@ Two endpoints supply the inputs:
 
 - `GET /v1/rates` - Mongolian rates: `rate` is **MNT per `unit_basis`
   units** of `currency`.
-- `GET /v1/fx` - the international table: `base` is `"USD"` and each
+- `GET /v1/fx` - the international tables: `base` is `"USD"` and each
   `rate` is **units of `currency` per 1 USD** (no MNT, no `channel`, no
-  `unit_basis`). Source `frankfurter`, 160 currencies including KZT and
-  JPY. It is fetched four times a day (00/06/12/18 Ulaanbaatar), so
+  `unit_basis`). Fetched four times a day (00/06/12/18 Ulaanbaatar), so
   poll it at most every 30 minutes with `If-None-Match`; a
   `published_at` up to ~4 days old is normal over a weekend and still
   `ok`. **Never treat an `/v1/fx` rate as MNT** - the two endpoints are
   separate precisely so the units cannot be confused.
+
+  **Send the app key on every `/v1/fx` request:**
+  `X-App-Key: <value>` (the value comes from the backend owner; keep it
+  out of source control, e.g. in an `.xcconfig` excluded from git, and
+  inject it at build time). `/v1/fx` can carry two sources:
+
+  | id | Sent when | What it is |
+  | --- | --- | --- |
+  | `frankfurter` | always | Central-bank reference, ~160 currencies, ~5 significant digits, a daily figure |
+  | `fxratesapi` | **only with a valid `X-App-Key`** | Market-derived mid rate, ~154 currencies, 10 decimals, stamped to the minute |
+
+  Without the key (or with a wrong one) `fxratesapi` is simply absent -
+  not an error - so the app must work with whichever sources arrive.
+  Its licence allows showing its rates only inside this app, for the
+  user's personal reference: do not let users export or share its
+  numbers, and do not send them to any other service. The two sources
+  differ slightly (KZT 439.76 vs 440.98 on the same day) - that is two
+  methods, not a bug.
+
+  **Choosing a source is the app's decision.** Whatever you choose, take
+  *both* rates of one conversion from the *same* source. A sensible
+  default: `fxratesapi` when present and `ok`, else `frankfurter` - and
+  show which one was used.
 
 **A. Foreign ↔ foreign (neither is MNT): `/v1/fx` only, pivoting
 through USD.** No MNT, no bank, no Bank of Mongolia. The backend only

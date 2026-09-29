@@ -16,6 +16,17 @@
   `FRANKFURTER_CURRENCIES`, `FRANKFURTER_URI`. It is deliberately not on
   `/v1/rates`, whose `rate` always means MNT per unit.
 - `kind` (`mnt_rates` | `usd_table`) on `/v1/sources`.
+- **fxRatesAPI** as a 17th source on `/v1/fx`: a market-derived USD
+  table, 154 currencies at 10 decimals, one keyed request 4 times a
+  day with its own call budget. Its licence allows its data only inside
+  our app, so it is **restricted**: served only to requests with a
+  valid `X-App-Key`, marked `Cache-Control: private`, and never
+  available through a history endpoint. New config: `FXRATESAPI_KEY`
+  (secret; empty disables the source), `FXRATESAPI_URI`.
+- **`X-App-Key` app authentication** (`APP_API_KEYS`, comma list for
+  rotation, fail closed when empty). Optional: requests without it get
+  every unrestricted source exactly as before.
+- `restricted` on `/v1/sources`.
 - `logo_url` on every source in `GET /v1/rates` and `/v1/sources`
   (null for Naiman Sharga, whose logo provenance could not be
   established). Logos are hosted at `/static/logos/` with a provenance

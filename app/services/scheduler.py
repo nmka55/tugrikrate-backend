@@ -12,7 +12,13 @@ The five Playwright sources cost a headless Chromium per crawl, so they
 run on a multiple of that (CRAWL_PLAYWRIGHT_MULTIPLIER, default 4 =>
 hourly while active). Every trigger carries random jitter so a bank
 never sees this service arrive on an exact interval boundary.
+
+International sources (Frankfurter, fxRatesAPI) run INTL_CRAWLS_PER_DAY
+times a day around the clock. One whose API key is not configured is
+not scheduled at all.
 """
+
+import sys
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -108,6 +114,12 @@ def build_scheduler(group: str | None = None) -> BackgroundScheduler:
     http = tuple(s for s in owned if s.cadence == CADENCE_FAST)
     browser = tuple(s for s in owned if s.cadence == CADENCE_SLOW)
     daily = tuple(s for s in owned if s.cadence == CADENCE_DAILY)
+    for spec in daily:
+        if not spec.configured:
+            logger.info(
+                f"{spec.id}: not scheduled - {spec.requires_config} is not set"
+            )
+    daily = tuple(s for s in daily if s.configured)
 
     scheduler = BackgroundScheduler(timezone=config.CRAWL_TIMEZONE)
     active, offpeak = _active_hours(), _offpeak_hours()
@@ -126,7 +138,7 @@ def build_scheduler(group: str | None = None) -> BackgroundScheduler:
         offpeak,
     )
     if daily:
-        _check_call_budget()
+        _check_call_budget(daily)
         # One job around the clock: these publish once a day, so the
         # banking-hours split has no meaning for them.
         _register(
@@ -139,27 +151,30 @@ def build_scheduler(group: str | None = None) -> BackgroundScheduler:
     return scheduler
 
 
-def _check_call_budget() -> None:
+def _check_call_budget(specs: tuple) -> None:
     """Refuse to start a schedule that needs more requests per day than
     the configured ceiling allows. Failing at startup is loud; letting
     the runtime guard silently starve the last fetches of the day is not.
-    """
-    # Imported here: the crawler module builds its budget from config
-    # at import time, which the scheduler tests must not depend on.
-    from app.crawlers.frankfurter import BUDGET
 
+    Every international source keeps its own budget (a module-level
+    BUDGET in its crawler module), so each is checked separately.
+    """
     # One request per fetch: the whole table is a single response.
     planned = config.INTL_CRAWLS_PER_DAY
-    if planned > BUDGET.limit:
-        raise ValueError(
-            f"INTL_CRAWLS_PER_DAY={config.INTL_CRAWLS_PER_DAY} plans "
-            f"{planned} calls/day but INTL_DAILY_CALL_LIMIT="
-            f"{BUDGET.limit}; lower the fetch rate or raise the limit"
+    for spec in specs:
+        # Read at call time: tests replace BUDGET on the module.
+        budget = sys.modules[spec.crawler.__module__].BUDGET
+        if planned > budget.limit:
+            raise ValueError(
+                f"{spec.id}: INTL_CRAWLS_PER_DAY="
+                f"{config.INTL_CRAWLS_PER_DAY} plans {planned} calls/day "
+                f"but INTL_DAILY_CALL_LIMIT={budget.limit}; lower the "
+                "fetch rate or raise the limit"
+            )
+        logger.info(
+            f"{spec.id}: call budget {planned} planned of "
+            f"{budget.limit} calls/day"
         )
-    logger.info(
-        f"International call budget: {planned} planned of "
-        f"{BUDGET.limit} calls/day"
-    )
 
 
 def start() -> BackgroundScheduler | None:

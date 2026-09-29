@@ -98,7 +98,7 @@ The backend therefore serves two feeds, kept apart because their
 | Endpoint | Sources | `rate` means |
 | --- | --- | --- |
 | `GET /v1/rates` | the 15 Mongolian sources | MNT per `unit_basis` units |
-| `GET /v1/fx` | international (Frankfurter) | units of `currency` per 1 USD, no MNT |
+| `GET /v1/fx` | international (Frankfurter; fxRatesAPI only with `X-App-Key`) | units of `currency` per 1 USD, no MNT |
 
 Consequences for the backend:
 
@@ -404,7 +404,10 @@ Confirm provenance (or accept the risk knowingly) before relying on it.
 Any second source must satisfy: its licence allows republishing through
 an API.
 
-### fxratesapi.com: usable, with conditions - not built yet
+### fxratesapi.com: source #17, restricted to our app
+
+**Built 2026-09-29** after the owner registered a key. Everything below
+the assessment was re-verified against the live *keyed* API.
 
 Assessed 2026-09-29 by the owner's request. Read directly: the Terms &
 Conditions and Permitted & Prohibited Uses (both v1.0, 28.11.2022; the
@@ -428,29 +431,51 @@ and cache the data on your end you can rest assured that we will
 consider this fair use." Attribution: "would be highly appreciated"
 (requested, not required).
 
-A consumer converter that shows reference rates fits that. **What does
-not fit today:**
+A consumer converter that shows reference rates fits that. The four
+conditions found, and how each is now met:
 
-1. **`/v1/fx` is an open public API.** Anyone can call it, which is
-   "transfer outside of your application" and "provide access to ...
-   the Services through ... the Internet" (Prohibited Uses). Their data
-   may only be served to our own app - needs app authentication
-   (e.g. App Attest or a per-install token), which the backend does not
-   have (see known gaps).
-2. **History.** `/v1/rates/{id}/history` would publish an archive of
-   their rates; Prohibited Uses bars archiving/caching "within another
-   web site" and redistribution "in any manner whatsoever". Their
-   snapshots must not be exposed through any history endpoint.
-3. **The keyless endpoint is not for production.** FAQ: public-plan
-   rate limits "are enforced over all users so we do not recommend
-   using the public plan for production use". Use a registered (free)
-   key. Free plans: no SLA, "fair use". Exact free quota not published
-   in the bundles (loaded at runtime); 4 requests/day is far inside any
-   plan found.
+1. **Only our app may receive it.** `/v1/fx` was an open public API,
+   which is "transfer outside of your application". → The source is
+   `restricted`: `/v1/fx` includes it only for a request with a valid
+   `X-App-Key` (see "App authentication" below), otherwise it is simply
+   absent. Such responses are `Cache-Control: private` with
+   `Vary: X-App-Key`, so no shared cache can hand them to a stranger.
+2. **No archive.** Prohibited Uses bars archiving/caching "within
+   another web site" and redistribution "in any manner whatsoever". →
+   `/v1/rates/fxratesapi/history` is a 404 for everyone, the app
+   included. Snapshots are still stored internally (change detection
+   needs the last one); only exposure is barred.
+3. **Registered key, not the public plan.** FAQ: public-plan limits
+   "are enforced over all users so we do not recommend using the public
+   plan for production use". → `FXRATESAPI_KEY` is required; without it
+   the source is never scheduled or served, never degraded to keyless.
 4. **Broad "except as permitted in writing" clauses** in Prohibited Uses
    (e.g. embedding data "into any ... application software") sit
-   awkwardly next to the T&C grant. Ask support@fxratesapi.com to
-   confirm this exact use in writing before launch.
+   awkwardly next to the T&C grant. → **Still open: the owner should
+   ask support@fxratesapi.com to confirm this exact use in writing
+   before launch.**
+
+**Found by reading keyed responses (not in their docs):**
+
+- **A wrong key does not fail.** It returns 200 with data from the
+  shared public plan (`x-ratelimit-limit: 61`); the registered plan
+  answers `-1` / `unlimited`. The crawler checks that header and puts
+  "key not honoured" in the crawl warnings rather than trusting the
+  status code.
+- **The table is not all fiat.** 180 codes include 11 crypto assets
+  (one, `OP`, not even three letters), 4 metals and 9 withdrawn ISO
+  codes (BYR, CUC, HRK, LTL, LVL, MRO, STD, VEF, ZMK). For MRO, STD and
+  VEF the successor code is absent from the table, so which currency
+  the number belongs to cannot be told - they are dropped (invariant
+  3). MNT and USD are dropped too. **154 currencies published.**
+- **It states the minute of publication** (`date`), so `published_at`
+  is exact (the adapter now takes a crawler's `published_at` when set).
+  The payload hash excludes it, so weekend repeats of the same rates do
+  not open new snapshots.
+- Verified live end to end: 1 request (1 of 4 budget), 154 quotes,
+  second crawl unchanged; `/v1/fx` without key → Frankfurter only
+  (`public`), wrong key → same, app key → both (`private`); history
+  404 with and without key.
 
 Payload (live, keyless, `GET https://api.fxratesapi.com/latest?base=USD`):
 `{success, terms, privacy, timestamp, date, base:"USD", rates:{...}}`,
@@ -466,25 +491,43 @@ Housekeeping signal: its docs "Request Pricing" page is an unedited
 template from a PDF-conversion product ("create more PDFs"). Low effort
 on docs; weigh accordingly.
 
-**To adopt it - who does what:**
+**Operating it - who does what:**
 
-1. *Owner:* create a free account at fxratesapi.com and generate a key
-   on its dashboard (`/app/tokens`). The API takes it as
-   `?api_key=...` or `Authorization: Bearer ...`; the backend will use
-   the header so the key never appears in logged URLs.
-2. *Owner:* store the key as a **secret environment variable**
-   (`FXRATESAPI_KEY`) - in the cloud dev environment's settings and on
-   the production host. Never in the repo, and never pasted into chat.
-3. *Owner (recommended before launch):* email support@fxratesapi.com
+1. *Owner, done:* free account, key stored as the secret environment
+   variable `FXRATESAPI_KEY`. The backend sends it only as
+   `Authorization: Bearer`, never in a URL, so it cannot leak into
+   request logs. Set it on the production host too.
+2. *Owner, to do:* set `APP_API_KEYS` (a long random string) on the
+   server and build the same value into the iOS app. **Until then
+   fxratesapi data is served to nobody** - fail closed by design.
+3. *Owner, recommended before launch:* email support@fxratesapi.com
    describing the use - rates fetched 4×/day by our backend, cached,
    shown only inside our iOS app for personal reference, no
    redistribution - and keep the written reply.
-4. *Backend (this repo), before any of its data is served:* app
-   authentication on `/v1/fx` (condition 1), keep its snapshots out of
-   every public history endpoint (condition 2), then the crawler: one
-   `GET /latest?base=USD` per fetch, same 4-a-day budget, `usd_table`
-   channel, missing key = source disabled rather than falling back to
-   the keyless public plan.
+
+### App authentication (`X-App-Key`) - what it is and is not
+
+The first endpoint with licence-restricted data needed a way to tell
+"our app" from "anyone on the internet". Built as the smallest thing
+that meets the licence without breaking anything that exists:
+
+- **Opt-in, per source.** A source is `restricted` in the registry.
+  Unrestricted data (the 15 banks, Frankfurter) stays public exactly as
+  before, so an app build without the key keeps working. A missing or
+  wrong key is not an error; restricted sources are just absent.
+- **Fail closed.** No `APP_API_KEYS` configured → restricted data goes
+  to nobody. Keys are compared in constant time
+  (`secrets.compare_digest`).
+- **Rotatable.** `APP_API_KEYS` is a list: add the new key, ship an app
+  version that sends it, remove the old key once old versions are gone.
+
+**Honest limit: this is a gate, not proof.** A key compiled into an iOS
+app can be extracted from the binary by a determined person. It stops
+the endpoint being open to anyone (the licence problem) and makes
+casual reuse impossible, but it does not *prove* a request came from a
+genuine install. The stronger step, if fxRatesAPI or growth ever calls
+for it, is Apple **App Attest** (per-install keys verified server-side)
+- more work on both sides, deliberately not done now.
 
 ### Why logos are hosted copies with recorded provenance
 
@@ -640,19 +683,33 @@ read; nothing above was assumed.
       No code changed - the backend never implemented the tiers.
 - [x] fxratesapi.com onboarding steps recorded (§5).
 
+**2026-09-29 (late night) - fxRatesAPI and app authentication.**
+
+- [x] **fxRatesAPI as source #17** (`usd_table`, 154 currencies, 10
+      decimals, exact publication minute), 4 fetches/day with its own
+      call budget, disabled without `FXRATESAPI_KEY`. Verified live
+      with the owner's key.
+- [x] **`X-App-Key` app authentication**, per-source `restricted` flag,
+      fail-closed, rotatable. fxRatesAPI served only with the key,
+      `private` caching, no history (§5).
+- [x] Scheduler checks each international source's budget separately
+      and skips any whose key is unset.
+- [x] Test suite made independent of real secrets in the environment
+      (autouse fixture), and a `config` reload hazard in one test fixed.
+- [x] 364 tests; isort/black/ruff clean.
+
 **Not done / known gaps**
 
 - [ ] **The iOS app is not connected yet.** No client exists.
 - [ ] **No production deployment.** Local SQLite only. A real
       deployment needs Postgres (free tiers have no persistent disk)
       and a decision on the Playwright worker split.
-- [ ] **A second international source is wanted** (ExchangeRate-API and
-      Viv Data rejected). **fxratesapi.com is usable with conditions**
-      (§5): its data may be served only to our own app, so it needs app
-      authentication on `/v1/fx` first, no public history of its
-      snapshots, a registered key, and ideally written confirmation.
-      `fawazahmed0/exchange-api` (CC0) remains a candidate pending a
-      provenance check.
+- [ ] **`APP_API_KEYS` not set yet**, so fxRatesAPI data is currently
+      served to nobody (fail closed). Owner sets it on the server and
+      in the app.
+- [ ] **fxRatesAPI written confirmation** of the use, recommended
+      before launch (§5, condition 4).
+- [ ] **App authentication is a shared secret, not App Attest** (§5).
 - [ ] **Conversion is not implemented anywhere yet** - it is the iOS
       app's job (mobile brief, rule 11). Backend-side, one question is
       open: whether "4 a day" also covers the banks.

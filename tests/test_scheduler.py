@@ -70,8 +70,9 @@ class TestSchedulerJobs:
         assert jobs["browser-active"].args[0] == SLOW_SPECS
         assert len(SLOW_SPECS) == 5
         assert len(FAST_SPECS) == 10
-        assert jobs["intl-daily"].args[0] == DAILY_SPECS
-        assert [s.id for s in DAILY_SPECS] == ["frankfurter"]
+        assert [s.id for s in DAILY_SPECS] == ["frankfurter", "fxratesapi"]
+        # fxratesapi has no key in tests, so only Frankfurter runs.
+        assert [s.id for s in jobs["intl-daily"].args[0]] == ["frankfurter"]
 
     def test_jobs_do_not_stack_on_themselves(self):
         for job in build_scheduler().get_jobs():
@@ -93,7 +94,7 @@ class TestSourceGroups:
     """Splitting the Playwright sources into their own process."""
 
     def test_group_all_owns_every_source(self):
-        assert len(specs_for_group("all")) == 16
+        assert len(specs_for_group("all")) == 17
 
     def test_fast_and_slow_partition_all_sources(self):
         fast = set(specs_for_group("fast"))
@@ -118,9 +119,12 @@ class TestSourceGroups:
         ids = {job.id for job in build_scheduler("slow").get_jobs()}
         assert ids == {"browser-active", "browser-offpeak"}
 
-    def test_split_processes_cover_every_source_exactly_once(self):
+    def test_split_processes_cover_every_source_exactly_once(
+        self, monkeypatch
+    ):
         """The safety property that lets the two run uncoordinated:
         no source is scheduled by both, and none is dropped."""
+        monkeypatch.setattr(config, "FXRATESAPI_KEY", "k")
         collected = []
         for group in ("fast", "slow"):
             for job in build_scheduler(group).get_jobs():
@@ -128,12 +132,30 @@ class TestSourceGroups:
 
         # Each bank appears once per time-window job (active +
         # offpeak), so exactly twice overall - never in both groups.
-        # The daily international source has a single around-the-clock
-        # job, so it appears exactly once.
+        # The daily international sources share a single
+        # around-the-clock job, so each appears exactly once.
         counts = Counter(collected)
-        assert len(counts) == 16
+        assert len(counts) == 17
         assert counts.pop("frankfurter") == 1
+        assert counts.pop("fxratesapi") == 1
         assert set(counts.values()) == {2}
+
+    def test_a_source_without_its_key_is_not_scheduled(self):
+        collected = {
+            spec.id
+            for job in build_scheduler("all").get_jobs()
+            for spec in job.args[0]
+        }
+        assert "fxratesapi" not in collected
+        assert "frankfurter" in collected
+
+    def test_a_source_with_its_key_is_scheduled(self, monkeypatch):
+        monkeypatch.setattr(config, "FXRATESAPI_KEY", "k")
+        jobs = {j.id: j for j in build_scheduler("all").get_jobs()}
+        assert [s.id for s in jobs["intl-daily"].args[0]] == [
+            "frankfurter",
+            "fxratesapi",
+        ]
 
 
 class TestInvalidGroup:
@@ -141,7 +163,7 @@ class TestInvalidGroup:
         # config validates the env var; specs_for_group itself is
         # permissive so a stray value can never silently collect
         # nothing.
-        assert len(specs_for_group("nonsense")) == 16
+        assert len(specs_for_group("nonsense")) == 17
 
 
 class TestInternationalSchedule:
@@ -158,10 +180,24 @@ class TestInternationalSchedule:
         assert fields["minute"] == "0"
 
     def test_the_default_schedule_fits_the_call_ceiling(self):
-        from app.crawlers.frankfurter import BUDGET
+        from app.crawlers import frankfurter, fxratesapi
 
-        # One request per fetch.
-        assert config.INTL_CRAWLS_PER_DAY <= BUDGET.limit
+        # One request per fetch, and each source has its own budget.
+        assert frankfurter.BUDGET is not fxratesapi.BUDGET
+        for budget in (frankfurter.BUDGET, fxratesapi.BUDGET):
+            assert config.INTL_CRAWLS_PER_DAY <= budget.limit
+
+    def test_each_sources_budget_is_checked_at_startup(self, monkeypatch):
+        import pytest
+
+        from app.crawlers import fxratesapi
+
+        monkeypatch.setattr(config, "FXRATESAPI_KEY", "k")
+        monkeypatch.setattr(
+            fxratesapi, "BUDGET", fxratesapi.DailyCallBudget(2)
+        )
+        with pytest.raises(ValueError, match="fxratesapi"):
+            build_scheduler("fast")
 
     def test_a_schedule_that_would_exceed_the_ceiling_refuses_to_start(
         self, monkeypatch
@@ -173,14 +209,19 @@ class TestInternationalSchedule:
             build_scheduler("fast")
 
     def test_crawls_per_day_must_divide_the_day(self, monkeypatch):
-        import importlib
+        import importlib.util
 
         import pytest
 
         import app.config as cfg
 
+        # Load a private copy of the module rather than reloading
+        # app.config: a reload rebinds `app.config.config` to a new
+        # object that every module imported earlier does not see, which
+        # silently breaks config monkeypatching in later tests.
         monkeypatch.setenv("INTL_CRAWLS_PER_DAY", "5")
+        probe = importlib.util.spec_from_file_location(
+            "_config_probe", cfg.__file__
+        )
         with pytest.raises(ValueError, match="divide 24"):
-            importlib.reload(cfg)
-        monkeypatch.undo()
-        importlib.reload(cfg)
+            probe.loader.exec_module(importlib.util.module_from_spec(probe))
