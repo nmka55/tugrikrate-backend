@@ -7,11 +7,21 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api.api import _rate_limit_hits, app
+from app.config import config
 from app.db.database import get_db
 from app.models.exchange_rate import CurrencyDetail, Rate
 from app.models.snapshot import Base
 from app.sources.models import CrawlResult, Quote
 from app.sources.registry import BY_ID
+
+
+@pytest.fixture(autouse=True)
+def no_secrets_from_the_environment(monkeypatch):
+    """Tests never see a real FXRATESAPI_KEY or APP_API_KEYS, so the
+    suite behaves the same on a laptop with keys set as in CI without
+    them. A test that needs a key sets one explicitly."""
+    monkeypatch.setattr(config, "FXRATESAPI_KEY", "")
+    monkeypatch.setattr(config, "APP_API_KEYS", [])
 
 
 @pytest.fixture(scope="function")

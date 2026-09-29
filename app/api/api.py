@@ -8,12 +8,14 @@ enum and admin-key auth.
 import asyncio
 from collections import OrderedDict, deque
 from contextlib import asynccontextmanager
+from pathlib import Path
 from time import monotonic
 
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.__version__ import __author__, __license__, __url__, __version__
 from app.api.routers import admin, system, v1
@@ -23,6 +25,10 @@ from app.services import scheduler
 from app.utils.logger import logger
 
 RATE_LIMIT_EXCLUDED_PATHS = {"/", "/redoc", "/openapi.json", "/api/health"}
+# Logos are small, cacheable files fetched in a burst on first launch;
+# counting them against the 60/min limit would starve /v1/rates.
+RATE_LIMIT_EXCLUDED_PREFIXES = ("/static/",)
+STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 _rate_limit_hits = OrderedDict()
 
 
@@ -120,6 +126,7 @@ async def rate_limit(request: Request, call_next):
     if (
         not config.RATE_LIMIT_ENABLED
         or request.url.path in RATE_LIMIT_EXCLUDED_PATHS
+        or request.url.path.startswith(RATE_LIMIT_EXCLUDED_PREFIXES)
     ):
         return await call_next(request)
 
@@ -149,6 +156,18 @@ async def rate_limit(request: Request, call_next):
     return response
 
 
+class _LogoFiles(StaticFiles):
+    """Static files that the app may cache hard: `logo_url` carries a
+    content hash in its query string, so a changed logo is a new URL."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        if response.status_code == 200:
+            response.headers["Cache-Control"] = "public, max-age=604800"
+        return response
+
+
+app.mount("/static", _LogoFiles(directory=STATIC_DIR), name="static")
 app.include_router(system.router)
 app.include_router(v1.router)
 app.include_router(admin.router)

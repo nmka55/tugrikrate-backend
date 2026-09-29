@@ -41,10 +41,14 @@ class TestEnvelope:
         assert body["schema_version"] == 1
         assert ISO_Z.match(body["generated_at"])
 
-    def test_every_registered_source_appears(self, client, test_db):
+    def test_every_mnt_source_appears(self, client, test_db):
+        """/v1/rates carries the sources whose `rate` is MNT per unit.
+        Foreign-exchange tables are on /v1/fx (tests/test_fx.py)."""
         seed(test_db)
         body = client.get("/v1/rates").json()
-        assert len(body["sources"]) == len(BY_ID)
+        expected = {i for i, s in BY_ID.items() if s.kind == "mnt_rates"}
+        assert {s["id"] for s in body["sources"]} == expected
+        assert len(expected) == 15
 
     def test_source_shape(self, client, test_db):
         seed(test_db)
@@ -54,6 +58,8 @@ class TestEnvelope:
         assert set(source) == {
             "id",
             "name",
+            "name_mn",
+            "logo_url",
             "type",
             "status",
             "fetched_at",
@@ -62,6 +68,7 @@ class TestEnvelope:
             "quotes",
         }
         assert source["name"] == "Khan Bank"
+        assert source["name_mn"] == "Хаан Банк"
         assert source["type"] == "commercial_bank"
         assert source["status"] in {"ok", "stale", "failing"}
         assert ISO_Z.match(source["fetched_at"])

@@ -98,6 +98,37 @@ class Config:
     # before giving up (Naiman Sharga has 3-day gaps).
     SOURCE_LOOKBACK_DAYS = _env_non_negative_int("SOURCE_LOOKBACK_DAYS", 7)
 
+    # International foreign-exchange sources (Frankfurter, fxratesapi).
+    # Each publishes
+    # a daily table, so it is fetched INTL_CRAWLS_PER_DAY times a day -
+    # never on the banks' 15-minute cadence - one request per fetch.
+    # 4 (every 6 h) is the owner's chosen ceiling. It must divide 24 so
+    # the fetches are evenly spaced.
+    INTL_CRAWLS_PER_DAY = _env_positive_int("INTL_CRAWLS_PER_DAY", 4)
+    if 24 % INTL_CRAWLS_PER_DAY:
+        raise ValueError("INTL_CRAWLS_PER_DAY must divide 24 evenly")
+    # Hard backstop on outbound requests per UTC day, enforced in the
+    # crawler (app/utils/call_budget.py) and checked against the
+    # schedule when the scheduler starts. Frankfurter documents no cap,
+    # so this is a self-imposed one; equal to the schedule, so a manual
+    # admin crawl beyond it is refused rather than sent.
+    INTL_DAILY_CALL_LIMIT = _env_positive_int("INTL_DAILY_CALL_LIMIT", 4)
+    # fxratesapi.com key (registered free plan). Empty = the source is
+    # disabled: never scheduled, never served. Never fall back to the
+    # keyless public plan, which its FAQ says is not for production.
+    FXRATESAPI_KEY = _env("FXRATESAPI_KEY").strip()
+    # Keys the iOS app sends as `X-App-Key`. Sources whose licence allows
+    # showing their data only inside our own app (fxratesapi) are served
+    # solely to a request carrying one of these. Comma list, so a key can
+    # be rotated without breaking installed app versions. Empty means
+    # restricted data is served to nobody (fail closed).
+    APP_API_KEYS = _env_list("APP_API_KEYS")
+
+    # Optional comma list restricting which currencies are published
+    # from the table. Empty means every currency it lists (minus MNT
+    # and the four metals).
+    FRANKFURTER_CURRENCIES = _env_list("FRANKFURTER_CURRENCIES")
+
     # Freshness thresholds behind the v1 `status` field. A source is
     # `ok` while it succeeded within this multiple of its own interval,
     # `stale` after that, and `failing` once it has missed this many
@@ -125,6 +156,13 @@ class Config:
     SELF_PING_INTERVAL_SECONDS = _env_positive_int(
         "SELF_PING_INTERVAL_SECONDS", 30
     )
+
+    # Absolute origin used to build `logo_url` (e.g.
+    # https://api.example.com). Empty falls back to the request's own
+    # origin, which behind a TLS-terminating proxy is often http://
+    # rather than https:// - set this in production so the iOS app is
+    # never handed a cleartext image URL.
+    PUBLIC_BASE_URL = _env("PUBLIC_BASE_URL").rstrip("/")
 
     # Public API safeguards
     API_MAX_LIMIT = _env_positive_int("API_MAX_LIMIT", 100)
@@ -178,6 +216,10 @@ class Config:
         "CAPITRONBANK_API_URL",
         "https://www.capitronbank.mn/admin/en/wp-json/bank/rates/capitronbank",
     )
+
+    # International reference API (v2: v1 is ECB-only and has no MNT)
+    FRANKFURTER_URI = _env("FRANKFURTER_URI", "https://api.frankfurter.dev/v2")
+    FXRATESAPI_URI = _env("FXRATESAPI_URI", "https://api.fxratesapi.com")
 
     # Playwright-based bank URLs
     TDBM_URI = _env("TDBM_URI", "https://www.tdbm.mn/en/exchange-rates")

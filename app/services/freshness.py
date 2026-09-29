@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 from app.config import config
 from app.models.snapshot import RateSnapshot, SourceState
-from app.sources.registry import CADENCE_SLOW, SourceSpec
+from app.sources.registry import CADENCE_DAILY, CADENCE_SLOW, SourceSpec
 
 STATUS_OK = "ok"
 STATUS_STALE = "stale"
@@ -35,6 +35,9 @@ def is_active_hours(at: datetime | None = None) -> bool:
 
 def interval_minutes(spec: SourceSpec, at: datetime | None = None) -> int:
     """Expected minutes between crawls of this source right now."""
+    if spec.cadence == CADENCE_DAILY:
+        # Not tied to banking hours: it publishes a daily table.
+        return 24 * 60 // config.INTL_CRAWLS_PER_DAY
     base = (
         config.CRAWL_ACTIVE_INTERVAL_MINUTES
         if is_active_hours(at)
@@ -85,7 +88,9 @@ def compute_status(
     if published is not None:
         if published.tzinfo is None:
             published = published.replace(tzinfo=timezone.utc)
-        cutoff = timedelta(hours=config.PUBLISHED_STALE_HOURS)
+        cutoff = timedelta(
+            hours=spec.published_stale_hours or config.PUBLISHED_STALE_HOURS
+        )
         if now - published > cutoff:
             return STATUS_STALE
 

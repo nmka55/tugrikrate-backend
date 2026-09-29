@@ -18,6 +18,7 @@ quote ships `verified: false` rather than a guess.
 from dataclasses import dataclass, field
 from decimal import Decimal
 
+from app.config import config
 from app.crawlers import (
     TDBM,
     ArigBank,
@@ -35,11 +36,14 @@ from app.crawlers import (
     TransBank,
     XacBank,
 )
+from app.crawlers.frankfurter import Frankfurter
+from app.crawlers.fxratesapi import FxRatesApi
 from app.sources.models import (
     CHANNEL_CASH,
     CHANNEL_NONCASH,
     CHANNEL_REFERENCE,
     CHANNEL_UNSPECIFIED,
+    CHANNEL_USD_TABLE,
     SIDE_BUY,
     SIDE_REFERENCE,
     SIDE_SELL,
@@ -50,12 +54,24 @@ TYPE_COMMERCIAL = "commercial_bank"
 TYPE_CENTRAL = "central_bank"
 TYPE_EXCHANGE = "exchange_bureau"
 TYPE_REMITTANCE = "remittance"
+# Not a bank: blends other institutions' published figures.
+TYPE_INTERNATIONAL = "international_aggregator"
 
 # Cadence classes. "slow" is the Playwright set - headless Chromium is
 # far heavier per crawl, so these run on a multiple of the base interval
 # (CRAWL_PLAYWRIGHT_MULTIPLIER).
 CADENCE_FAST = "fast"
 CADENCE_SLOW = "slow"
+# Sources that publish a daily table (Frankfurter). Fetched
+# INTL_CRAWLS_PER_DAY times a day on the HTTP side.
+CADENCE_DAILY = "daily"
+
+# What a source's quotes mean, and therefore which endpoint serves it.
+#   mnt_rates: `rate` is MNT per unit of `currency` -> GET /v1/rates
+#   usd_table: `rate` is units of `currency` per 1 USD, no MNT involved
+#              -> GET /v1/fx
+KIND_MNT_RATES = "mnt_rates"
+KIND_USD_TABLE = "usd_table"
 
 # Never published. Every source that lists MNT lists it as 1, which is
 # a self-reference, not an exchange rate.
@@ -96,6 +112,11 @@ class SourceSpec:
     id: str
     name: str
     name_mn: str
+    # Where the two names above came from. Names are facts about the
+    # world, not preferences: a later edit must beat this evidence, not
+    # just a hunch (see ARCHITECTURE.md, "Why source names are
+    # evidence-based").
+    name_evidence: str
     type: str
     crawler: type
     cadence: str
@@ -105,10 +126,28 @@ class SourceSpec:
     # without the rates changing and would otherwise force a new
     # snapshot on every single crawl.
     volatile_keys: frozenset[str] = field(default_factory=frozenset)
+    # Overrides PUBLISHED_STALE_HOURS for sources whose stated date
+    # legitimately lags longer (weekends, provider holidays).
+    published_stale_hours: int | None = None
+    kind: str = KIND_MNT_RATES
+    # True when the source's licence allows showing its data only inside
+    # our own app (fxratesapi). Such a source is served solely to
+    # requests with a valid X-App-Key, and never through any history
+    # endpoint. See ARCHITECTURE.md §5.
+    restricted: bool = False
+    # Name of a config attribute that must be non-empty for this source
+    # to run at all (its API key). Unset -> never scheduled, never served.
+    requires_config: str | None = None
 
     @property
     def channels(self) -> frozenset[str]:
         return frozenset(slot.channel for slot in self.slots)
+
+    @property
+    def configured(self) -> bool:
+        if self.requires_config is None:
+            return True
+        return bool(getattr(config, self.requires_config, ""))
 
 
 # Four genuinely-labelled channels, the common case.
@@ -132,6 +171,10 @@ SPECS: tuple[SourceSpec, ...] = (
         id="khanbank",
         name="Khan Bank",
         name_mn="Хаан Банк",
+        name_evidence=(
+            "Legal entity Khan Bank JSC (FMO, Finnfund); Mongolian brand "
+            "ХААН Банк (Wikipedia). Unchanged."
+        ),
         type=TYPE_COMMERCIAL,
         crawler=KhanBank,
         cadence=CADENCE_FAST,
@@ -147,6 +190,10 @@ SPECS: tuple[SourceSpec, ...] = (
         id="golomtbank",
         name="Golomt Bank",
         name_mn="Голомт Банк",
+        name_evidence=(
+            "golomtbank.com/en titles itself Golomt Bank; Mongolian form "
+            "Голомт банк (Wikipedia, Wikidata). Unchanged."
+        ),
         type=TYPE_COMMERCIAL,
         crawler=GolomtBank,
         cadence=CADENCE_FAST,
@@ -159,7 +206,14 @@ SPECS: tuple[SourceSpec, ...] = (
     SourceSpec(
         id="xacbank",
         name="XacBank",
-        name_mn="Хас Банк",
+        name_mn="ХасБанк",
+        name_evidence=(
+            "The bank's own Facebook page and Mongolian company profiles "
+            "write ХасБанк as one word; the legal entity is XacBank JSC "
+            "(Green Climate Fund, Kiva). Mongolian Wikipedia titles the "
+            "article 'Хас банк', so spacing varies in the wild: the "
+            "one-word brand form is used. Was 'Хас Банк'."
+        ),
         type=TYPE_COMMERCIAL,
         crawler=XacBank,
         cadence=CADENCE_FAST,
@@ -173,6 +227,11 @@ SPECS: tuple[SourceSpec, ...] = (
         id="arigbank",
         name="Arig Bank",
         name_mn="Ариг Банк",
+        name_evidence=(
+            "zangia.mn profile 'Ариг Банк / Arig bank'; arigbank.mn page "
+            "titles read Ариг Банк. Renamed from Erel Bank in 2014. "
+            "Unchanged."
+        ),
         type=TYPE_COMMERCIAL,
         crawler=ArigBank,
         cadence=CADENCE_FAST,
@@ -184,8 +243,13 @@ SPECS: tuple[SourceSpec, ...] = (
     ),
     SourceSpec(
         id="statebank",
-        name="State Bank",
-        name_mn="Төрийн Банк",
+        name="State Bank of Mongolia",
+        name_mn="Төрийн банк",
+        name_evidence=(
+            "The bank's own Facebook page is 'State Bank of Mongolia "
+            "(Төрийн банк)'. Was 'State Bank', which is only the "
+            "Wikipedia article title."
+        ),
         type=TYPE_COMMERCIAL,
         crawler=StateBank,
         cadence=CADENCE_FAST,
@@ -202,6 +266,10 @@ SPECS: tuple[SourceSpec, ...] = (
         id="mongolbank",
         name="Bank of Mongolia",
         name_mn="Монгол Банк",
+        name_evidence=(
+            "mongolbank.mn/en titles itself 'The Bank Of Mongolia'; "
+            "Mongolian Монгол банк (also styled Монголбанк). Unchanged."
+        ),
         type=TYPE_CENTRAL,
         crawler=MongolBank,
         cadence=CADENCE_FAST,
@@ -217,6 +285,11 @@ SPECS: tuple[SourceSpec, ...] = (
         id="capitronbank",
         name="Capitron Bank",
         name_mn="Капитрон Банк",
+        name_evidence=(
+            "Facebook page 'Капитрон Банк / Capitron Bank'; "
+            "capitronbank.mn is titled 'Капитрон банк'. LinkedIn uses the "
+            "longer 'Capitron Bank of Mongolia'. Unchanged."
+        ),
         type=TYPE_COMMERCIAL,
         crawler=CapitronBank,
         cadence=CADENCE_FAST,
@@ -236,7 +309,13 @@ SPECS: tuple[SourceSpec, ...] = (
     SourceSpec(
         id="naimansharga",
         name="Naiman Sharga",
-        name_mn="Найман Шарга",
+        name_mn="Найман шарга валют арилжаа",
+        name_evidence=(
+            "Facebook page 'Найман шарга валют арилжаа' (literally "
+            "'Naiman Sharga currency exchange'). No official English name "
+            "was found: 'Naiman Sharga' is a transliteration, not a "
+            "registered English name. Was 'Найман Шарга'."
+        ),
         type=TYPE_EXCHANGE,
         crawler=NaimanSharga,
         cadence=CADENCE_FAST,
@@ -253,7 +332,13 @@ SPECS: tuple[SourceSpec, ...] = (
     SourceSpec(
         id="sendmn",
         name="SendMN",
-        name_mn="SendMN",
+        name_mn="Сэнд Эм Эн ББСБ",
+        name_evidence=(
+            "Legal entity 'Сэнд Эм Эн ББСБ' ХХК (mn.wikipedia), i.e. "
+            "SendMN NBFI LLC (Remitly); ББСБ = non-bank financial "
+            "institution. The consumer brand is written SendMN in both "
+            "languages (send.mn/mn, ikon.mn). Was 'SendMN'."
+        ),
         type=TYPE_REMITTANCE,
         crawler=SendMN,
         cadence=CADENCE_FAST,
@@ -268,7 +353,12 @@ SPECS: tuple[SourceSpec, ...] = (
     SourceSpec(
         id="mbank",
         name="M Bank",
-        name_mn="М Банк",
+        name_mn="М банк",
+        name_evidence=(
+            "m-bank.mn page titles read 'М банк'; the legal entity is 'М "
+            "БАНК ХК' (mongolchamber.mn); the app listing is 'M bank'. "
+            "Was 'М Банк'."
+        ),
         type=TYPE_COMMERCIAL,
         crawler=MBank,
         cadence=CADENCE_FAST,
@@ -281,8 +371,13 @@ SPECS: tuple[SourceSpec, ...] = (
     ),
     SourceSpec(
         id="tdbm",
-        name="Trade and Development Bank",
+        name="Trade and Development Bank of Mongolia",
         name_mn="Худалдаа Хөгжлийн Банк",
+        name_evidence=(
+            "tdbm.mn/en about page and the ADB document title both read "
+            "'Trade and Development Bank of Mongolia' (TDB for short). "
+            "Was 'Trade and Development Bank'."
+        ),
         type=TYPE_COMMERCIAL,
         crawler=TDBM,
         cadence=CADENCE_SLOW,
@@ -298,6 +393,11 @@ SPECS: tuple[SourceSpec, ...] = (
         id="bogdbank",
         name="Bogd Bank",
         name_mn="Богд Банк",
+        name_evidence=(
+            "Registered forms vary: 'Bogd Bank of Mongolia' (LinkedIn), "
+            "'Bogd Bank JSC' (FMO), 'Bogd Bank Llc' (EMIS). The short "
+            "brand is used. Unchanged."
+        ),
         type=TYPE_COMMERCIAL,
         crawler=BogdBank,
         cadence=CADENCE_SLOW,
@@ -313,6 +413,11 @@ SPECS: tuple[SourceSpec, ...] = (
         id="ckbank",
         name="Chinggis Khaan Bank",
         name_mn="Чингис Хаан Банк",
+        name_evidence=(
+            "ckbank.mn/page/about?lang=en reads 'Chinggis Khaan Bank'; "
+            "Facebook page 'Чингис Хаан Банк - Chinggis Khaan Bank'. "
+            "Unchanged."
+        ),
         type=TYPE_COMMERCIAL,
         crawler=CKBank,
         cadence=CADENCE_SLOW,
@@ -328,8 +433,14 @@ SPECS: tuple[SourceSpec, ...] = (
     ),
     SourceSpec(
         id="nibank",
-        name="National Investment Bank",
+        name="National Investment Bank of Mongolia",
         name_mn="Үндэсний Хөрөнгө Оруулалтын Банк",
+        name_evidence=(
+            "Facebook page (nibank.mn) 'Үндэсний Хөрөнгө Оруулалтын Банк "
+            "/ National Investment Bank of Mongolia'; SWIFT record "
+            "NAIMMNUB reads NATIONAL INVESTMENT BANK OF MONGOLIA. Was "
+            "'National Investment Bank'."
+        ),
         type=TYPE_COMMERCIAL,
         crawler=NIBank,
         cadence=CADENCE_SLOW,
@@ -343,8 +454,16 @@ SPECS: tuple[SourceSpec, ...] = (
     ),
     SourceSpec(
         id="transbank",
-        name="Trans Bank",
-        name_mn="Транс Банк",
+        name="TransBank",
+        name_mn="Тээвэр Хөгжлийн Банк",
+        name_evidence=(
+            "transbank.mn page title is 'Тээвэр хөгжлийн банк' (= "
+            "Transport Development Bank); zangia.mn profile 'Тээвэр "
+            "хөгжлийн банк / Trans bank'; Facebook 'TransBank'; its App "
+            "Store app is published by 'Transport and Development Bank "
+            "LLC'. The old 'Транс Банк' was a phonetic rendering of the "
+            "brand, not the registered Mongolian name. Was 'Trans Bank'."
+        ),
         type=TYPE_COMMERCIAL,
         crawler=TransBank,
         cadence=CADENCE_SLOW,
@@ -360,6 +479,73 @@ SPECS: tuple[SourceSpec, ...] = (
             "State Bank's 3589/3615 and 3589/3597 the same day."
         ),
     ),
+    SourceSpec(
+        id="frankfurter",
+        name="Frankfurter",
+        name_mn="Франкфуртер",
+        name_evidence=(
+            "The service calls itself 'Frankfurter' (frankfurter.dev, "
+            "api.frankfurter.dev). It is a foreign service with no "
+            "official Mongolian name: 'Франкфуртер' is a Cyrillic "
+            "transliteration, not a registered name."
+        ),
+        type=TYPE_INTERNATIONAL,
+        crawler=Frankfurter,
+        cadence=CADENCE_DAILY,
+        kind=KIND_USD_TABLE,
+        slots=(Slot("cash.buy", CHANNEL_USD_TABLE, SIDE_REFERENCE),),
+        evidence=(
+            "GET /v2/rates?base=USD returns one row per currency, "
+            "{date, base: USD, quote, rate}: units of `quote` per 1 "
+            "USD, a single blended mid figure with no buy/sell and no "
+            "channel. Served on /v1/fx, never /v1/rates, because it is "
+            "not an MNT rate. Blended across the central banks that "
+            "publish each pair (for USD/MNT: BDI, BOM, CBKKW, CBR, "
+            "CBU, NBK, NBKR, NBP, of which BDI, BOM and CBR carry the "
+            "Bank of Mongolia's own figure), so it is not an "
+            "independent market rate. Rounded to 5 decimal places by "
+            "the source, which is why a USD table is used rather than "
+            "its per-pair endpoint (KZT->USD direct is 0.157% off the "
+            "table ratio). MNT and the four metals are not published. "
+            "v1 is ECB-only with no MNT; v2 is required. Rates fall "
+            "under each provider's own terms."
+        ),
+        published_stale_hours=96,
+    ),
+    SourceSpec(
+        id="fxratesapi",
+        name="fxRatesAPI",
+        name_mn="fxRatesAPI",
+        name_evidence=(
+            "Its Terms & Conditions page is titled 'Terms & Conditions - "
+            "fxRatesAPI' and say 'fxRatesAPI.com is a site operated by "
+            "Saritra GmbH' (Vienna, FN502707a). A foreign service with "
+            "no Mongolian name; its wordmark is Latin ('API' is an "
+            "acronym), so it is shown as-is rather than transliterated."
+        ),
+        type=TYPE_INTERNATIONAL,
+        crawler=FxRatesApi,
+        cadence=CADENCE_DAILY,
+        kind=KIND_USD_TABLE,
+        slots=(Slot("cash.buy", CHANNEL_USD_TABLE, SIDE_REFERENCE),),
+        evidence=(
+            "GET /latest?base=USD (keyed, Authorization: Bearer) returns "
+            "{success, timestamp, date, base: USD, rates: {CODE: "
+            "rate}}: units of CODE per 1 USD, one mid figure per "
+            "currency, no buy/sell, no channel. 180 codes at 10 "
+            "decimal places, updated every minute; its FAQ says rates "
+            "are 'derived from ... commercial sources, private banks "
+            "and national banks' - market-derived, unlike Frankfurter's "
+            "central-bank reference, so the two differ slightly (KZT "
+            "439.74 vs 441.22 the same day). Not published: MNT, USD, "
+            "metals, the 11 crypto codes and 9 retired currencies it "
+            "still lists. Licence: display to our own app's end users "
+            "only, hence restricted."
+        ),
+        published_stale_hours=96,
+        restricted=True,
+        requires_config="FXRATESAPI_KEY",
+    ),
 )
 
 BY_ID: dict[str, SourceSpec] = {spec.id: spec for spec in SPECS}
@@ -369,17 +555,19 @@ BY_BANK_NAME: dict[str, SourceSpec] = {
 
 FAST_SPECS = tuple(s for s in SPECS if s.cadence == CADENCE_FAST)
 SLOW_SPECS = tuple(s for s in SPECS if s.cadence == CADENCE_SLOW)
+DAILY_SPECS = tuple(s for s in SPECS if s.cadence == CADENCE_DAILY)
 
 
 def specs_for_group(group: str) -> tuple[SourceSpec, ...]:
     """The sources a process configured with `group` is responsible for.
 
-    The split is by cadence class, which is also the split by cost: the
-    "slow" group is exactly the five Playwright sources, each of which
-    needs a headless Chromium.
+    The split is by cost: the "slow" group is exactly the five
+    Playwright sources, each of which needs a headless Chromium. Every
+    plain-HTTP source - the bank JSON endpoints and the daily
+    international ones - belongs to "fast".
     """
     if group == "fast":
-        return FAST_SPECS
+        return FAST_SPECS + DAILY_SPECS
     if group == "slow":
         return SLOW_SPECS
     return SPECS

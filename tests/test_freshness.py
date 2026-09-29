@@ -169,3 +169,66 @@ class TestStatus:
         assert (
             compute_status(FAST, snapshot(checked), None, now) == STATUS_STALE
         )
+
+
+class TestDailyInternationalSource:
+    """Frankfurter publishes once a day, so banking hours mean nothing
+    to it and a weekend-old date is not an outage."""
+
+    DAILY = BY_ID["frankfurter"]
+
+    def test_interval_ignores_banking_hours(self):
+        # 4 fetches a day => one every 6 hours, day and night.
+        assert interval_minutes(self.DAILY, at_local(10)) == 360
+        assert interval_minutes(self.DAILY, at_local(2)) == 360
+
+    def test_a_three_day_old_date_is_still_ok_over_a_weekend(self):
+        now = at_local(10)
+        published = now - timedelta(hours=72)
+        assert (
+            compute_status(
+                self.DAILY,
+                snapshot(now - timedelta(minutes=30), published),
+                None,
+                now,
+            )
+            == STATUS_OK
+        )
+
+    def test_but_the_same_age_would_stale_a_bank(self):
+        now = at_local(10)
+        published = now - timedelta(hours=72)
+        assert (
+            compute_status(
+                FAST,
+                snapshot(now - timedelta(minutes=1), published),
+                None,
+                now,
+            )
+            == STATUS_STALE
+        )
+
+    def test_a_date_older_than_its_own_limit_is_stale(self):
+        now = at_local(10)
+        published = now - timedelta(hours=self.DAILY.published_stale_hours + 1)
+        assert (
+            compute_status(
+                self.DAILY,
+                snapshot(now - timedelta(minutes=30), published),
+                None,
+                now,
+            )
+            == STATUS_STALE
+        )
+
+    def test_missing_two_of_its_crawls_makes_it_stale(self):
+        now = at_local(10)
+        checked = now - timedelta(
+            minutes=interval_minutes(self.DAILY, now)
+            * config.STALE_AFTER_INTERVALS
+            + 5
+        )
+        assert (
+            compute_status(self.DAILY, snapshot(checked), None, now)
+            == STATUS_STALE
+        )

@@ -15,7 +15,8 @@ need the app to talk to it.
 ## The backend
 
 A FastAPI service that collects exchange rates from 15 Mongolian banks
-and serves them over one stable contract. The app must **only** call
+and institutions, plus an international USD table, and serves them over
+a stable contract. The app must **only** call
 this service — never a bank directly.
 
 - Source: https://github.com/nmka55/tugrikrate-backend
@@ -32,7 +33,8 @@ are on the same Wi-Fi.
 
 ## The endpoint
 
-`GET /v1/rates` — every source's latest rates. Optional filters:
+`GET /v1/rates` — every Mongolian source's latest rates (`GET /v1/fx`,
+the international table, is described in rule 11). Optional filters:
 `?currency=USD,EUR` and `?source=khanbank,golomtbank`.
 
 Real response (trimmed to one currency and three sources; the full
@@ -46,6 +48,8 @@ response is 15 sources, 43 currencies, ~587 quotes):
     {
       "id": "khanbank",
       "name": "Khan Bank",
+      "name_mn": "Хаан Банк",
+      "logo_url": "http://192.168.0.143:8000/static/logos/khanbank.jpg?v=99cc0762a4dc",
       "type": "commercial_bank",
       "status": "ok",
       "fetched_at": "2026-09-29T03:55:39Z",
@@ -61,6 +65,8 @@ response is 15 sources, 43 currencies, ~587 quotes):
     {
       "id": "mongolbank",
       "name": "Bank of Mongolia",
+      "name_mn": "Монгол Банк",
+      "logo_url": "http://192.168.0.143:8000/static/logos/mongolbank.png?v=ada1dcb2791e",
       "type": "central_bank",
       "status": "ok",
       "fetched_at": "2026-09-29T03:55:45Z",
@@ -73,6 +79,8 @@ response is 15 sources, 43 currencies, ~587 quotes):
     {
       "id": "sendmn",
       "name": "SendMN",
+      "name_mn": "Сэнд Эм Эн ББСБ",
+      "logo_url": "http://192.168.0.143:8000/static/logos/sendmn.jpg?v=135034dbbb23",
       "type": "remittance",
       "status": "ok",
       "fetched_at": "2026-09-29T03:55:42Z",
@@ -151,8 +159,142 @@ today, but don't hardcode that — the conversion is
 set when the source itself states when it published. Null means the
 source doesn't say — don't substitute `fetched_at` for it.
 
-**9. Timestamps are UTC with a `Z` suffix.** Use an ISO8601 decoding
+**9. Every source has an English `name` and a Mongolian `name_mn`.**
+Show `name_mn` when the app language is Mongolian and `name`
+otherwise. Both are always present and non-empty. They are the
+institutions' own official names, so do not re-translate or "tidy"
+them (e.g. TransBank is `Тээвэр Хөгжлийн Банк` in Mongolian, not a
+phonetic `Транс Банк`).
+
+**10. `logo_url` is an absolute URL, or `null`.** Load it with
+`AsyncImage`/`URLSession` and cache it hard: the URL embeds a content
+hash (`?v=`), so a changed logo arrives as a new URL and an unchanged
+one never needs revalidating. Images are PNG or JPEG (never SVG),
+mostly 512×512 squares (Bank of Mongolia 180, CK Bank 128). `null`
+means no logo of verified provenance exists (Naiman Sharga today) -
+show a neutral placeholder, and never derive one from the name. Treat
+the images as the institutions' trademarks: show them only next to that
+institution's own name and rates.
+
+**11. Conversion policy - the app implements this, exactly.** It is the
+project owner's requirement, and **this section is its only
+specification**: the backend deliberately does no conversion and no
+fallback, it only serves the two feeds below. Do not substitute another
+source for a step, and do not expect a `/convert` endpoint.
+
+Two endpoints supply the inputs:
+
+- `GET /v1/rates` - Mongolian rates: `rate` is **MNT per `unit_basis`
+  units** of `currency`.
+- `GET /v1/fx` - the international tables: `base` is `"USD"` and each
+  `rate` is **units of `currency` per 1 USD** (no MNT, no `channel`, no
+  `unit_basis`). Fetched four times a day (00/06/12/18 Ulaanbaatar), so
+  poll it at most every 30 minutes with `If-None-Match`; a
+  `published_at` up to ~4 days old is normal over a weekend and still
+  `ok`. **Never treat an `/v1/fx` rate as MNT** - the two endpoints are
+  separate precisely so the units cannot be confused.
+
+  **Send the app key on every `/v1/fx` request:**
+  `X-App-Key: <value>` (the value comes from the backend owner; keep it
+  out of source control, e.g. in an `.xcconfig` excluded from git, and
+  inject it at build time). `/v1/fx` can carry two sources:
+
+  | id | Sent when | What it is |
+  | --- | --- | --- |
+  | `frankfurter` | always | Central-bank reference, ~160 currencies, ~5 significant digits, a daily figure |
+  | `fxratesapi` | **only with a valid `X-App-Key`** | Market-derived mid rate, ~154 currencies, 10 decimals, stamped to the minute |
+
+  Without the key (or with a wrong one) `fxratesapi` is simply absent -
+  not an error - so the app must work with whichever sources arrive.
+  Its licence allows showing its rates only inside this app, for the
+  user's personal reference: do not let users export or share its
+  numbers, and do not send them to any other service. The two sources
+  differ slightly (KZT 439.76 vs 440.98 on the same day) - that is two
+  methods, not a bug.
+
+  **Choosing a source is the app's decision.** Whatever you choose, take
+  *both* rates of one conversion from the *same* source. A sensible
+  default: `fxratesapi` when present and `ok`, else `frankfurter` - and
+  show which one was used.
+
+**A. Foreign ↔ foreign (neither is MNT): `/v1/fx` only, pivoting
+through USD.** No MNT, no bank, no Bank of Mongolia. The backend only
+downloads USD-based rates (a table of every pair would be ~25,600
+numbers), so every foreign pair is computed **X → USD → Y** - confirmed
+by the project owner.
+
+```swift
+// perUSD(X) = units of X per 1 USD, all Decimal, from ONE source's snapshot.
+func fxConvert(_ amount: Decimal, from a: String, to b: String,
+               table: [String: Decimal]) -> Decimal? {
+    if a == b { return amount }
+    let perUSD: (String) -> Decimal? = { $0 == "USD" ? 1 : table[$0] }
+    guard let ra = perUSD(a), let rb = perUSD(b) else { return nil }
+    let usd = amount / ra            // X -> USD
+    return usd * rb                  // USD -> Y
+}
+// 250 000 KZT -> CNY with KZT 441.22, CNY 6.71:
+//   250_000 / 441.22 = 566.61 USD;  566.61 * 6.71 = 3801.9 CNY
+```
+
+If either currency is missing from the table, say so; never fall back
+to MNT rates for a foreign pair.
+
+**B. MNT involved (the other currency is X). Try in this order and
+show the user which one was used:**
+
+1. **The chosen bank's own quote** for X - `/v1/rates`, the quote for
+   the channel the user picked. X→MNT uses the bank's **`buy`**;
+   MNT→X uses its **`sell`**. Skip a side that is absent (never treat
+   it as zero).
+2. **Bank of Mongolia reference** (`mongolbank`, `channel: "reference"`)
+   for X, used for both directions - if the chosen bank has no quote
+   for X. Label the result "reference rate", not "bank rate".
+3. **Bank of Mongolia via USD** - if `mongolbank` has no X either.
+   With `usdRef` = Bank of Mongolia's USD reference rate (MNT per USD)
+   and `perUSD` = the `/v1/fx` rate for X:
+
+   ```swift
+   // X -> MNT
+   let mnt = amountX / perUSD * usdRef
+   // MNT -> X
+   let x   = amountMNT / usdRef * perUSD
+   ```
+
+   Label it "estimated via USD" - it is a composed figure, not a rate
+   any institution quotes.
+
+Do all arithmetic in `Decimal`; the international rates carry ~5
+significant digits, so foreign results are indicative to roughly
+0.01-0.05 %, fine for a converter and not for settlement. Step 2 and 3
+figures are reference values: **do not present them as rates the user
+can transact at.** When the user is actually exchanging cash, use a
+bank's `cash` quotes.
+
+**Open question for the owner (decide in the app):** whether step 1 → 2
+happens when the *chosen* bank lacks X (assumed here) or only when *no*
+bank has it. Build the step logic so that is a one-line change.
+
+**12. `type` is non-exhaustive.** Now one of `commercial_bank`,
+`central_bank`, `exchange_bureau`, `remittance`,
+`international_aggregator`. Decode unknown values instead of throwing.
+
+**13. Timestamps are UTC with a `Z` suffix.** Use an ISO8601 decoding
 strategy; `.iso8601` works for these.
+
+## OpenAPI (optional, recommended)
+
+The backend publishes its contract as OpenAPI 3.1: live at
+`GET /openapi.json`, and committed as `docs/openapi.json` in the backend
+repo. **The app does not need it to work** - it only ever decodes JSON.
+But you can generate the Swift models from it (e.g.
+[swift-openapi-generator](https://github.com/apple/swift-openapi-generator))
+instead of hand-writing DTOs, so a contract change becomes a compile
+error rather than a runtime decode failure. Regenerate when the backend
+bumps its version. In the schema every field is required; nullable ones
+(`logo_url`, `fetched_at`, `published_at`, `last_checked_at`) are
+`string | null` - a missing quote is absent from the `quotes` array, not
+a null field.
 
 ## Caching — please implement this
 

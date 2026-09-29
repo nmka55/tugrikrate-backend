@@ -43,8 +43,12 @@ def _published_at(spec: SourceSpec, crawler) -> datetime | None:
     are anchored to midnight local Mongolian time, because that is the
     day boundary they are actually quoting against. Sources that state
     nothing keep published_at null rather than having fetch time
-    substituted in.
+    substituted in. A source that states the exact instant (fxRatesAPI)
+    sets `published_at` itself and is used as-is.
     """
+    exact = getattr(crawler, "published_at", None)
+    if isinstance(exact, datetime):
+        return exact
     published = getattr(crawler, "published_date", None)
     if published is None:
         return None
@@ -126,6 +130,9 @@ def collect(spec: SourceSpec, target_date: str) -> CrawlResult:
     crawler = spec.crawler(target_date)
     rates = crawler.crawl() or {}
     quotes, warnings = build_quotes(spec, rates)
+    # Crawlers that make many requests (Frankfurter) collect their own
+    # non-fatal notes; upstream-shaped ones simply have none.
+    warnings.extend(getattr(crawler, "warnings", None) or [])
 
     return CrawlResult(
         source_id=spec.id,

@@ -103,6 +103,58 @@ Read `ARCHITECTURE.md` first — it carries the why behind all of this.
   cannot be confirmed ships `verified: false`. Do not widen
   `UNVERIFIED_BASIS_CURRENCIES` down to a guess, or narrow it without
   re-running the probe.
+- **Source names are evidence-based.** `name` / `name_mn` /
+  `name_evidence` in the registry are pinned by
+  `tests/test_source_names.py`. Do not "tidy" or re-translate them
+  (TransBank's Mongolian name is `Тээвэр Хөгжлийн Банк`, not a phonetic
+  `Транс Банк`). Change one only with new evidence, in the registry,
+  the test table and ARCHITECTURE.md together.
+- **Conversion and its fallback between sources are the app's job, not
+  the backend's** (owner's decision). Do not add a `/convert` endpoint
+  or backend fallback logic, and do not restate the fallback order in
+  backend docs: it lives only in `docs/mobile-integration-prompt.md`
+  rule 11. The backend serves inputs under one rule: **USD is the
+  pivot** - the server downloads only USD-based rates from foreign
+  sources, never per pair (owner confirmed; an all-pairs table is
+  infeasible), and the app computes X → USD → Y. See ARCHITECTURE.md
+  "Conversion: what the backend does and does not do".
+- **Frankfurter is source #16, a USD table, and not a bank.** It lives
+  in `app/crawlers/frankfurter.py` but is deliberately *not* in
+  `HTTP_CRAWLERS`, keeping `crawlers/__init__.py` upstream-identical.
+  Its quotes use the `usd_table` channel (units per 1 USD) and are
+  served on `GET /v1/fx`, **never** on `/v1/rates`, whose `rate` always
+  means MNT per unit - do not mix them. Use `/v2` (v1 has no MNT); one
+  request per fetch; **4 fetches a day** (`INTL_CRAWLS_PER_DAY`, must
+  divide 24), bounded by `DailyCallBudget` (`INTL_DAILY_CALL_LIMIT`,
+  default 4) - the scheduler refuses a cadence that exceeds it. The
+  4-a-day limit applies to this source only; banks keep their own
+  cadence. Rationale and precision evidence: ARCHITECTURE.md §5.
+- **ExchangeRate-API and Viv Data (API.market) are rejected** (Terms
+  forbid redistribution through an API; Viv Data resells the same
+  data). Do not re-add them; any replacement source must allow
+  republishing through an API.
+- **fxRatesAPI is source #17 and `restricted`** (licence: our app's
+  users only; ARCHITECTURE.md §5). A `restricted` source is served on
+  `/v1/fx` only with a valid `X-App-Key` (`APP_API_KEYS`, fail closed
+  when empty), with `Cache-Control: private`, and **never** through
+  any history endpoint - not even for the app. Never expose it
+  elsewhere, never add a keyless fallback, never put `FXRATESAPI_KEY`
+  in a URL (it goes in `Authorization: Bearer`). A wrong key still
+  returns 200 from the public plan: the crawler detects that by the
+  `x-ratelimit-limit` header, not the status. Tests never read real
+  secrets (`tests/conftest.py` blanks both keys); set one explicitly in
+  a test that needs it.
+- **`X-App-Key` is a shared secret in the app binary - a gate, not
+  proof** of a genuine install. App Attest is the upgrade path; do not
+  describe the current scheme as stronger than it is.
+- **Logos are hosted copies with provenance.** Refresh with
+  `python -m scripts.fetch_logos`; never hot-link a bank. Naiman
+  Sharga intentionally has none (`tests/test_logos.py::NO_LOGO`).
+  Set `PUBLIC_BASE_URL` in production.
+- **`docs/openapi.json` is committed.** Changing any v1 model fails
+  `tests/test_openapi.py` until `python -m scripts.export_openapi` is
+  re-run and the diff reviewed. Keep `docs/mobile-integration-prompt.md`
+  in step.
 - **Line length is 79** (`pyproject.toml`), not black's default 88.
 - **`target-version` is pinned to `py313`** even though the Dockerfile
   runs 3.14. Deliberate, inherited from upstream: Black targeting

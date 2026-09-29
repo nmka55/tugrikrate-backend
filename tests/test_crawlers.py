@@ -15,6 +15,8 @@ import json
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
+import requests
+
 from app.crawlers import (
     ArigBank,
     CapitronBank,
@@ -544,3 +546,173 @@ class TestCrawlerRegistration:
 
         for crawler_cls in ALL_CRAWLERS:
             assert crawler_cls.BANK_NAME in BY_BANK_NAME
+
+
+class TestFrankfurter:
+    """Row shape copied from the live response of
+    GET api.frankfurter.dev/v2/rates?base=USD, read on 2026-09-29."""
+
+    @staticmethod
+    def row(quote, rate, date=TODAY, base="USD"):
+        return {"date": date, "base": base, "quote": quote, "rate": rate}
+
+    def crawler(self, monkeypatch, rows, status=200):
+        from app.crawlers import frankfurter as mod
+
+        calls = []
+
+        def fake(self, url, **kwargs):
+            calls.append((url, kwargs))
+            resp = mock_response(rows, status_code=status)
+            resp.headers = {}
+            if status >= 400:
+                resp.raise_for_status.side_effect = requests.HTTPError(
+                    str(status)
+                )
+            return resp
+
+        monkeypatch.setattr(mod, "BUDGET", mod.DailyCallBudget(100))
+        monkeypatch.setattr(mod.Frankfurter, "get", fake)
+        crawler = mod.Frankfurter(TODAY)
+        crawler.calls = calls
+        return crawler
+
+    def test_the_whole_table_costs_exactly_one_request(self, monkeypatch):
+        crawler = self.crawler(
+            monkeypatch,
+            [self.row("KZT", 441.22), self.row("EUR", 0.8782)],
+        )
+        crawler.crawl()
+
+        assert len(crawler.calls) == 1
+        url, kwargs = crawler.calls[0]
+        assert url.endswith("/rates")
+        assert kwargs["params"] == {"base": "USD"}
+
+    def test_rates_are_exact_decimals_never_floats(self, monkeypatch):
+        crawler = self.crawler(
+            monkeypatch,
+            [self.row("KZT", 441.22), self.row("JPY", 157.25)],
+        )
+        rates = crawler.crawl()
+
+        assert rates["kzt"].cash.buy == Decimal("441.22")
+        assert rates["jpy"].cash.buy == Decimal("157.25")
+        assert isinstance(rates["kzt"].cash.buy, Decimal)
+        # Written once; nothing is copied into another cell.
+        assert rates["kzt"].cash.sell is None
+        assert rates["kzt"].noncash.buy is None
+
+    def test_mnt_metals_and_the_base_itself_are_not_published(
+        self, monkeypatch
+    ):
+        crawler = self.crawler(
+            monkeypatch,
+            [
+                self.row("KZT", 441.22),
+                self.row("MNT", 3594.95),
+                self.row("XAU", 0.00024),
+                self.row("XAG", 0.02),
+                self.row("XPD", 0.0007),
+                self.row("XPT", 0.001),
+                self.row("USD", 1),
+            ],
+        )
+        assert set(crawler.crawl()) == {"kzt"}
+
+    def test_an_unpublished_rate_is_skipped_not_invented(self, monkeypatch):
+        crawler = self.crawler(
+            monkeypatch, [self.row("KZT", 441.22), self.row("EUR", 0)]
+        )
+        assert set(crawler.crawl()) == {"kzt"}
+
+    def test_a_row_priced_against_another_base_fails_the_crawl(
+        self, monkeypatch
+    ):
+        import pytest
+
+        crawler = self.crawler(
+            monkeypatch, [self.row("KZT", 4093.69, base="EUR")]
+        )
+        with pytest.raises(ValueError, match="base"):
+            crawler.crawl()
+
+    def test_a_non_list_body_fails_the_crawl(self, monkeypatch):
+        import pytest
+
+        crawler = self.crawler(monkeypatch, {"message": "not found"})
+        with pytest.raises(ValueError, match="list"):
+            crawler.crawl()
+
+    def test_records_the_newest_date_and_a_stable_payload(self, monkeypatch):
+        yesterday = (
+            datetime.date.fromisoformat(TODAY) - datetime.timedelta(days=1)
+        ).isoformat()
+        crawler = self.crawler(
+            monkeypatch,
+            [
+                self.row("USDX", 1, date=yesterday),
+                self.row("KZT", 441.22),
+                self.row("EUR", 0.8782, date=yesterday),
+            ],
+        )
+        crawler.crawl()
+
+        assert crawler.published_date == datetime.date.fromisoformat(TODAY)
+        assert json.loads(crawler.raw_payload) == [
+            {"date": yesterday, "quote": "EUR", "rate": "0.8782"},
+            {"date": TODAY, "quote": "KZT", "rate": "441.22"},
+            {"date": yesterday, "quote": "USDX", "rate": "1"},
+        ]
+
+    def test_a_pair_far_behind_the_rest_is_reported(self, monkeypatch):
+        old = (
+            datetime.date.fromisoformat(TODAY) - datetime.timedelta(days=9)
+        ).isoformat()
+        crawler = self.crawler(
+            monkeypatch,
+            [self.row("KZT", 441.22), self.row("ZWG", 26.5, date=old)],
+        )
+        rates = crawler.crawl()
+
+        assert "zwg" in rates  # still published, but not silently
+        assert any("ZWG" in w for w in crawler.warnings)
+
+    def test_currency_filter_from_config(self, monkeypatch):
+        from app.config import config
+
+        monkeypatch.setattr(config, "FRANKFURTER_CURRENCIES", ["kzt"])
+        crawler = self.crawler(
+            monkeypatch, [self.row("KZT", 441.22), self.row("EUR", 0.8782)]
+        )
+        assert set(crawler.crawl()) == {"kzt"}
+
+    def test_rate_limiting_raises_a_specific_error(self, monkeypatch):
+        import pytest
+
+        from app.crawlers.frankfurter import FrankfurterRateLimited
+
+        crawler = self.crawler(monkeypatch, [], status=429)
+        with pytest.raises(FrankfurterRateLimited):
+            crawler.crawl()
+
+    def test_a_server_error_fails_the_crawl(self, monkeypatch):
+        import pytest
+
+        crawler = self.crawler(monkeypatch, [], status=500)
+        with pytest.raises(requests.HTTPError):
+            crawler.crawl()
+
+    def test_the_call_budget_refuses_the_request_past_the_limit(
+        self, monkeypatch
+    ):
+        import pytest
+
+        from app.crawlers import frankfurter as mod
+
+        crawler = self.crawler(monkeypatch, [self.row("KZT", 441.22)])
+        monkeypatch.setattr(mod, "BUDGET", mod.DailyCallBudget(1))
+        crawler.crawl()
+        with pytest.raises(mod.CallBudgetExceeded):
+            crawler.crawl()
+        assert len(crawler.calls) == 1  # the second was never sent

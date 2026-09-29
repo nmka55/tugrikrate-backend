@@ -2,6 +2,76 @@
 
 # Өөрчлөлтийн Түүх
 
+## [Unreleased]
+
+### Added
+
+- **Frankfurter** as a 16th source (`type: "international_aggregator"`)
+  and a new endpoint, **`GET /v1/fx`**: a USD-based foreign-exchange
+  table (160 currencies, units of each per 1 USD, no MNT), the input the
+  app needs for foreign↔foreign conversion via USD. Uses Frankfurter `/v2` (`/v1` has no MNT). One
+  request per fetch, **4 fetches a day** (00/06/12/18 Ulaanbaatar), with
+  a 4-request daily ceiling that the scheduler checks at startup. New
+  config: `INTL_CRAWLS_PER_DAY`, `INTL_DAILY_CALL_LIMIT`,
+  `FRANKFURTER_CURRENCIES`, `FRANKFURTER_URI`. It is deliberately not on
+  `/v1/rates`, whose `rate` always means MNT per unit.
+- `kind` (`mnt_rates` | `usd_table`) on `/v1/sources`.
+- **fxRatesAPI** as a 17th source on `/v1/fx`: a market-derived USD
+  table, 154 currencies at 10 decimals, one keyed request 4 times a
+  day with its own call budget. Its licence allows its data only inside
+  our app, so it is **restricted**: served only to requests with a
+  valid `X-App-Key`, marked `Cache-Control: private`, and never
+  available through a history endpoint. New config: `FXRATESAPI_KEY`
+  (secret; empty disables the source), `FXRATESAPI_URI`.
+- **`X-App-Key` app authentication** (`APP_API_KEYS`, comma list for
+  rotation, fail closed when empty). Optional: requests without it get
+  every unrestricted source exactly as before.
+- `restricted` on `/v1/sources`.
+- `logo_url` on every source in `GET /v1/rates` and `/v1/sources`
+  (null for Naiman Sharga, whose logo provenance could not be
+  established). Logos are hosted at `/static/logos/` with a provenance
+  manifest; refresh with `python -m scripts.fetch_logos`. New config:
+  `PUBLIC_BASE_URL` (set it in production).
+- `docs/openapi.json` (regenerate with `python -m scripts.export_openapi`)
+  and a test that fails when it is stale. `/v1/sources` and history now
+  have response models; `/v1/rates` documents `ETag` and 304.
+
+- `name_mn` (official Mongolian name) on every source in
+  `GET /v1/rates` and `/v1/rates/{id}/history`; `name_evidence` on
+  `/v1/sources`. Additive, `schema_version` remains 1.
+
+### Changed
+
+- Source names corrected to each institution's own official form:
+  TransBank is `Тээвэр Хөгжлийн Банк` in Mongolian (was `Транс Банк`);
+  `State Bank` -> `State Bank of Mongolia`; `Trade and Development
+  Bank` -> `... of Mongolia`; `National Investment Bank` -> `... of
+  Mongolia`; `Хас Банк` -> `ХасБанк`; `М Банк` -> `М банк`; Naiman
+  Sharga and SendMN Mongolian names. Evidence in ARCHITECTURE.md §5.
+- The ETag now covers source names and logo paths, so a rename or a
+  replaced logo reaches cached clients.
+- `RatesResponse.schema_version` is now a required field in the OpenAPI
+  schema (the value is unchanged, still 1).
+- The rate limiter no longer counts `/static/` requests.
+
+### Rejected
+
+- ExchangeRate-API: its Terms forbid re-distribution and use in any
+  service offering programmatic access to rates. See ARCHITECTURE.md §5.
+- Viv Data "Currency Converter API" (API.market): a resale of the same
+  ExchangeRate-API data, so the same restriction applies. See §5.
+
+### Decided
+
+- Foreign↔foreign conversion pivots through USD (X → USD → Y); only
+  USD-based tables are downloaded, never per-pair rates. Confirmed by
+  the owner.
+- Conversion and the fallback between sources are done by the iOS app,
+  not the backend; the rules live only in
+  `docs/mobile-integration-prompt.md` (rule 11).
+- fxratesapi.com assessed: usable only if `/v1/fx` is restricted to our
+  own app (it is public today). Not added yet. See ARCHITECTURE.md §5.
+
 ## [2.0.0] - 2026-09-29
 
 Fork of [btseee/mongolian-bank-exchange-rate](https://github.com/btseee/mongolian-bank-exchange-rate)

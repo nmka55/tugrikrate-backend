@@ -249,6 +249,10 @@ Everything has a working default; see `app/config.py` for the full list.
 | `MAX_WORKERS` / `PLAYWRIGHT_MAX_WORKERS` | `8` / `3` | Crawl concurrency |
 | `SELF_PING_URL` | (empty) | Keeps a sleeping free-tier instance awake |
 | `CORS_ORIGINS`, `RATE_LIMIT_*` | — | Public API safeguards |
+| `INTL_CRAWLS_PER_DAY` / `INTL_DAILY_CALL_LIMIT` | `4` / `4` | International fetches per day, and the hard per-source ceiling |
+| `FXRATESAPI_KEY` | (empty) | fxRatesAPI key (secret). Empty disables that source |
+| `APP_API_KEYS` | (empty) | Comma list the iOS app sends as `X-App-Key`. Empty means app-only sources are served to nobody |
+| `PUBLIC_BASE_URL` | (request origin) | Absolute base for `logo_url`; set it in production |
 
 Rate limiting and the admin job lock are in-process, so they are only
 correct with a single Uvicorn process (no `--workers`).
