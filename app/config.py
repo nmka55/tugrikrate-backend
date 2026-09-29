@@ -120,9 +120,21 @@ class Config:
     # Keys the iOS app sends as `X-App-Key`. Sources whose licence allows
     # showing their data only inside our own app (fxratesapi) are served
     # solely to a request carrying one of these. Comma list, so a key can
-    # be rotated without breaking installed app versions. Empty means
-    # restricted data is served to nobody (fail closed).
+    # be rotated without breaking installed app versions.
+    #
+    # Empty = development mode (owner's decision, 2026-09-29): restricted
+    # sources are served to every request, so the feed can be used
+    # before the app ships a key. That is only licence-safe while the
+    # server is not publicly reachable, so production sets
+    # REQUIRE_APP_KEY=true (render.yaml does), which refuses to start
+    # with no keys rather than run open.
     APP_API_KEYS = _env_list("APP_API_KEYS")
+    REQUIRE_APP_KEY = _env_bool("REQUIRE_APP_KEY", False)
+    if REQUIRE_APP_KEY and not APP_API_KEYS:
+        raise ValueError(
+            "REQUIRE_APP_KEY is true but APP_API_KEYS is empty - refusing "
+            "to serve licence-restricted sources to everyone"
+        )
 
     # Optional comma list restricting which currencies are published
     # from the table. Empty means every currency it lists (minus MNT

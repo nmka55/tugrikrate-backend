@@ -22,6 +22,7 @@ def no_secrets_from_the_environment(monkeypatch):
     them. A test that needs a key sets one explicitly."""
     monkeypatch.setattr(config, "FXRATESAPI_KEY", "")
     monkeypatch.setattr(config, "APP_API_KEYS", [])
+    monkeypatch.setattr(config, "REQUIRE_APP_KEY", False)
 
 
 @pytest.fixture(scope="function")
