@@ -144,22 +144,43 @@ class TestInvalidGroup:
         assert len(specs_for_group("nonsense")) == 16
 
 
-class TestInternationalCallBudget:
-    def test_default_schedule_fits_well_inside_the_ceiling(self):
-        from app.crawlers.frankfurter import BUDGET
-        from app.services.scheduler import _INTL_CURRENCY_ESTIMATE
-        from app.utils.call_budget import planned_daily_calls
+class TestInternationalSchedule:
+    """The owner's rule: the foreign-exchange table is fetched 4 times a
+    day, never on the banks' 15-minute cadence."""
 
-        planned = planned_daily_calls(
-            config.INTL_CRAWL_INTERVAL_HOURS, _INTL_CURRENCY_ESTIMATE + 1
-        )
-        assert planned <= BUDGET.limit
+    def intl_job(self):
+        return {j.id: j for j in build_scheduler().get_jobs()}["intl-daily"]
+
+    def test_default_is_four_fetches_a_day(self):
+        assert config.INTL_CRAWLS_PER_DAY == 4
+        fields = {f.name: str(f) for f in self.intl_job().trigger.fields}
+        assert fields["hour"] == "0,6,12,18"
+        assert fields["minute"] == "0"
+
+    def test_the_default_schedule_fits_the_call_ceiling(self):
+        from app.crawlers.frankfurter import BUDGET
+
+        # One request per fetch.
+        assert config.INTL_CRAWLS_PER_DAY <= BUDGET.limit
 
     def test_a_schedule_that_would_exceed_the_ceiling_refuses_to_start(
         self, monkeypatch
     ):
         import pytest
 
-        monkeypatch.setattr(config, "INTL_CRAWL_INTERVAL_HOURS", 1)
+        monkeypatch.setattr(config, "INTL_CRAWLS_PER_DAY", 24)
         with pytest.raises(ValueError, match="INTL_DAILY_CALL_LIMIT"):
             build_scheduler("fast")
+
+    def test_crawls_per_day_must_divide_the_day(self, monkeypatch):
+        import importlib
+
+        import pytest
+
+        import app.config as cfg
+
+        monkeypatch.setenv("INTL_CRAWLS_PER_DAY", "5")
+        with pytest.raises(ValueError, match="divide 24"):
+            importlib.reload(cfg)
+        monkeypatch.undo()
+        importlib.reload(cfg)

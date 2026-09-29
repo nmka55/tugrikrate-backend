@@ -6,14 +6,18 @@
 
 ### Added
 
-- **Frankfurter** as a 16th source (`type: "international_aggregator"`):
-  161 currencies as MNT per unit on the `reference` channel, so the app
-  can convert foreign↔foreign by division. Uses Frankfurter `/v2`
-  (`/v1` has no MNT). Runs every 12 h under a hard 1000-requests/day
-  ceiling (~324 planned); the scheduler refuses to start a cadence that
-  would exceed it. New config: `INTL_CRAWL_INTERVAL_HOURS`,
-  `INTL_DAILY_CALL_LIMIT`, `INTL_REQUEST_PAUSE_MS`,
-  `INTL_MAX_FAILED_PERCENT`, `FRANKFURTER_CURRENCIES`, `FRANKFURTER_URI`.
+- **Frankfurter** as a 16th source (`type: "international_aggregator"`)
+  and a new endpoint, **`GET /v1/fx`**: a USD-based foreign-exchange
+  table (160 currencies, units of each per 1 USD, no MNT) for converting
+  foreign↔foreign and for the USD leg of the fallback in ARCHITECTURE.md
+  "Conversion policy". Uses Frankfurter `/v2` (`/v1` has no MNT). One
+  request per fetch, **4 fetches a day** (00/06/12/18 Ulaanbaatar), with
+  a 4-request daily ceiling that the scheduler checks at startup. New
+  config: `INTL_CRAWLS_PER_DAY`, `INTL_DAILY_CALL_LIMIT`,
+  `FRANKFURTER_CURRENCIES`, `FRANKFURTER_URI`. It is deliberately not on
+  `/v1/rates`, whose `rate` always means MNT per unit.
+- `kind` (`mnt_rates` | `usd_table`) on `/v1/sources`.
+- The owner's conversion policy, recorded as a requirement.
 - `logo_url` on every source in `GET /v1/rates` and `/v1/sources`
   (null for Naiman Sharga, whose logo provenance could not be
   established). Logos are hosted at `/static/logos/` with a provenance
@@ -45,6 +49,8 @@
 
 - ExchangeRate-API: its Terms forbid re-distribution and use in any
   service offering programmatic access to rates. See ARCHITECTURE.md §5.
+- Viv Data "Currency Converter API" (API.market): a resale of the same
+  ExchangeRate-API data, so the same restriction applies. See §5.
 
 ## [2.0.0] - 2026-09-29
 

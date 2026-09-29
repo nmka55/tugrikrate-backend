@@ -25,15 +25,9 @@ from app.sources.registry import (
     CADENCE_SLOW,
     specs_for_group,
 )
-from app.utils.call_budget import planned_daily_calls
 from app.utils.logger import logger
 
 _scheduler: BackgroundScheduler | None = None
-
-# Frankfurter lists 166 currencies; MNT and the four metals are not
-# requested. Deliberately a little high so growth in its catalogue does
-# not silently break the budget check.
-_INTL_CURRENCY_ESTIMATE = 170
 
 
 def _active_hours() -> list[int]:
@@ -139,7 +133,7 @@ def build_scheduler(group: str | None = None) -> BackgroundScheduler:
             scheduler,
             "intl-daily",
             daily,
-            config.INTL_CRAWL_INTERVAL_HOURS * 60,
+            24 * 60 // config.INTL_CRAWLS_PER_DAY,
             list(range(24)),
         )
     return scheduler
@@ -148,25 +142,22 @@ def build_scheduler(group: str | None = None) -> BackgroundScheduler:
 def _check_call_budget() -> None:
     """Refuse to start a schedule that needs more requests per day than
     the configured ceiling allows. Failing at startup is loud; letting
-    the runtime guard silently starve the last crawls of the day is not.
+    the runtime guard silently starve the last fetches of the day is not.
     """
     # Imported here: the crawler module builds its budget from config
     # at import time, which the scheduler tests must not depend on.
     from app.crawlers.frankfurter import BUDGET
 
-    # +1 for the currency catalogue request that starts every crawl.
-    calls_per_crawl = _INTL_CURRENCY_ESTIMATE + 1
-    planned = planned_daily_calls(
-        config.INTL_CRAWL_INTERVAL_HOURS, calls_per_crawl
-    )
+    # One request per fetch: the whole table is a single response.
+    planned = config.INTL_CRAWLS_PER_DAY
     if planned > BUDGET.limit:
         raise ValueError(
-            f"INTL_CRAWL_INTERVAL_HOURS={config.INTL_CRAWL_INTERVAL_HOURS} "
-            f"plans ~{planned} calls/day but INTL_DAILY_CALL_LIMIT="
-            f"{BUDGET.limit}; lengthen the interval or raise the limit"
+            f"INTL_CRAWLS_PER_DAY={config.INTL_CRAWLS_PER_DAY} plans "
+            f"{planned} calls/day but INTL_DAILY_CALL_LIMIT="
+            f"{BUDGET.limit}; lower the fetch rate or raise the limit"
         )
     logger.info(
-        f"International call budget: ~{planned} planned of "
+        f"International call budget: {planned} planned of "
         f"{BUDGET.limit} calls/day"
     )
 

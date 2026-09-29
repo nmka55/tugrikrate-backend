@@ -41,10 +41,14 @@ class TestEnvelope:
         assert body["schema_version"] == 1
         assert ISO_Z.match(body["generated_at"])
 
-    def test_every_registered_source_appears(self, client, test_db):
+    def test_every_mnt_source_appears(self, client, test_db):
+        """/v1/rates carries the sources whose `rate` is MNT per unit.
+        Foreign-exchange tables are on /v1/fx (tests/test_fx.py)."""
         seed(test_db)
         body = client.get("/v1/rates").json()
-        assert len(body["sources"]) == len(BY_ID)
+        expected = {i for i, s in BY_ID.items() if s.kind == "mnt_rates"}
+        assert {s["id"] for s in body["sources"]} == expected
+        assert len(expected) == 15
 
     def test_source_shape(self, client, test_db):
         seed(test_db)
@@ -234,20 +238,3 @@ class TestSupportingEndpoints:
     def test_legacy_endpoints_are_gone(self, client, test_db):
         for path in ("/api/rates", "/api/rates/latest"):
             assert client.get(path).status_code == 404
-
-
-class TestInternationalSource:
-    def test_frankfurter_serves_reference_quotes_only(self, client, test_db):
-        seed(
-            test_db,
-            "frankfurter",
-            quotes=[Quote("KZT", "reference", "reference", Decimal("8.1477"))],
-        )
-        body = client.get("/v1/rates?source=frankfurter").json()
-        source = body["sources"][0]
-
-        assert source["type"] == "international_aggregator"
-        assert source["name_mn"] == "Франкфуртер"
-        assert [q["channel"] for q in source["quotes"]] == ["reference"]
-        assert [q["side"] for q in source["quotes"]] == ["reference"]
-        assert source["quotes"][0]["rate"] == "8.1477"

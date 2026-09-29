@@ -178,9 +178,9 @@ class TestDailyInternationalSource:
     DAILY = BY_ID["frankfurter"]
 
     def test_interval_ignores_banking_hours(self):
-        expected = config.INTL_CRAWL_INTERVAL_HOURS * 60
-        assert interval_minutes(self.DAILY, at_local(10)) == expected
-        assert interval_minutes(self.DAILY, at_local(2)) == expected
+        # 4 fetches a day => one every 6 hours, day and night.
+        assert interval_minutes(self.DAILY, at_local(10)) == 360
+        assert interval_minutes(self.DAILY, at_local(2)) == 360
 
     def test_a_three_day_old_date_is_still_ok_over_a_weekend(self):
         now = at_local(10)

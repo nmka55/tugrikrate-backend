@@ -41,6 +41,7 @@ from app.sources.models import (
     CHANNEL_NONCASH,
     CHANNEL_REFERENCE,
     CHANNEL_UNSPECIFIED,
+    CHANNEL_USD_TABLE,
     SIDE_BUY,
     SIDE_REFERENCE,
     SIDE_SELL,
@@ -59,9 +60,16 @@ TYPE_INTERNATIONAL = "international_aggregator"
 # (CRAWL_PLAYWRIGHT_MULTIPLIER).
 CADENCE_FAST = "fast"
 CADENCE_SLOW = "slow"
-# Sources that publish one figure a day (Frankfurter). Scheduled on an
-# hours-scale interval, INTL_CRAWL_INTERVAL_HOURS, on the HTTP side.
+# Sources that publish a daily table (Frankfurter). Fetched
+# INTL_CRAWLS_PER_DAY times a day on the HTTP side.
 CADENCE_DAILY = "daily"
+
+# What a source's quotes mean, and therefore which endpoint serves it.
+#   mnt_rates: `rate` is MNT per unit of `currency` -> GET /v1/rates
+#   usd_table: `rate` is units of `currency` per 1 USD, no MNT involved
+#              -> GET /v1/fx
+KIND_MNT_RATES = "mnt_rates"
+KIND_USD_TABLE = "usd_table"
 
 # Never published. Every source that lists MNT lists it as 1, which is
 # a self-reference, not an exchange rate.
@@ -119,6 +127,7 @@ class SourceSpec:
     # Overrides PUBLISHED_STALE_HOURS for sources whose stated date
     # legitimately lags longer (weekends, provider holidays).
     published_stale_hours: int | None = None
+    kind: str = KIND_MNT_RATES
 
     @property
     def channels(self) -> frozenset[str]:
@@ -467,20 +476,23 @@ SPECS: tuple[SourceSpec, ...] = (
         type=TYPE_INTERNATIONAL,
         crawler=Frankfurter,
         cadence=CADENCE_DAILY,
-        slots=(Slot("cash.buy", CHANNEL_REFERENCE, SIDE_REFERENCE),),
+        kind=KIND_USD_TABLE,
+        slots=(Slot("cash.buy", CHANNEL_USD_TABLE, SIDE_REFERENCE),),
         evidence=(
-            "GET /v2/rates?base=X&quotes=MNT returns one object per "
-            "call, {date, base, quote, rate}: MNT per 1 X, one mid "
-            "figure with no buy/sell and no channel, so reference/"
-            "reference like the Bank of Mongolia. Blended across the "
-            "central-bank providers that publish the pair (for USD, "
-            "eight: BDI, BOM, CBKKW, CBR, CBU, NBK, NBKR, NBP, of "
-            "which BDI, BOM and CBR carry the Bank of Mongolia's own "
-            "figure), so it is NOT an independent market rate - it "
-            "tracks the Bank of Mongolia reference closely (USD "
-            "3594.95 vs 3595.17). Rounded to ~5 significant digits by "
-            "the source. v1 is ECB-only with no MNT; v2 is required. "
-            "Rates fall under each provider's own terms."
+            "GET /v2/rates?base=USD returns one row per currency, "
+            "{date, base: USD, quote, rate}: units of `quote` per 1 "
+            "USD, a single blended mid figure with no buy/sell and no "
+            "channel. Served on /v1/fx, never /v1/rates, because it is "
+            "not an MNT rate. Blended across the central banks that "
+            "publish each pair (for USD/MNT: BDI, BOM, CBKKW, CBR, "
+            "CBU, NBK, NBKR, NBP, of which BDI, BOM and CBR carry the "
+            "Bank of Mongolia's own figure), so it is not an "
+            "independent market rate. Rounded to 5 decimal places by "
+            "the source, which is why a USD table is used rather than "
+            "its per-pair endpoint (KZT->USD direct is 0.157% off the "
+            "table ratio). MNT and the four metals are not published. "
+            "v1 is ECB-only with no MNT; v2 is required. Rates fall "
+            "under each provider's own terms."
         ),
         published_stale_hours=96,
     ),

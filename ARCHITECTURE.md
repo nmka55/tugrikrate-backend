@@ -72,6 +72,72 @@ correctness bug, not a style question.
    does not publish that number. They never become a value, and a
    missing quote is *absent* from the response rather than null.
 
+## Conversion policy (product requirement)
+
+Stated by the project owner on 2026-09-29 and **binding**: it decides
+which rates the app converts with. Do not "improve" it by routing a
+conversion through a different source than it names.
+
+**Foreign to foreign** (neither currency is MNT), e.g. JPY→USD,
+KZT→EUR: use the **international source only** (`GET /v1/fx`). No MNT,
+no Mongolian bank, no Bank of Mongolia is involved.
+
+- USD→X is the table's rate; X→USD is `1 / rate`.
+- X→Y with neither USD: `amount × rate_Y / rate_X`, both rates taken
+  from the **same source's same snapshot**.
+
+**MNT involved** (the other currency is X), in this order:
+
+1. **The Mongolian bank's own quote** for X. `X→MNT` uses the bank's
+   `buy`, `MNT→X` its `sell` (sides are the bank's perspective).
+2. If that bank does not quote X: the **Bank of Mongolia reference rate**
+   for X (`mongolbank`, channel `reference`, used for both directions -
+   it has no spread).
+3. If the Bank of Mongolia does not have X either: go **through USD**.
+   `MNT↔USD` at the Bank of Mongolia's USD rate, then `USD↔X` from the
+   international table.
+   `X→MNT = amount ÷ rate_X × BoM_USD` ·
+   `MNT→X = amount ÷ BoM_USD × rate_X`.
+
+Rules that follow from it:
+
+- **Say which tier was used.** The app must show the user the basis
+  (bank / Bank of Mongolia / Bank of Mongolia via USD / international
+  table). A tier-3 number is a composed estimate, not a rate anyone
+  quotes, and must not look like one. Tier-2 and tier-3 numbers are
+  reference figures, not transactable rates.
+- **All arithmetic in `Decimal`; round only for display.**
+- The international table never supplies a rate to tiers 1 or 2, and is
+  never used for MNT except as the USD↔X leg of tier 3.
+- Frankfurter's own MNT figures are deliberately **not** served: the
+  policy takes MNT rates from Mongolian sources only, and Frankfurter's
+  MNT is largely a copy of the Bank of Mongolia's anyway (§5).
+
+Where it lives: the conversion itself is done **by the app**
+(`docs/mobile-integration-prompt.md` has the algorithm and the edge
+cases). The backend supplies the inputs - `/v1/rates` for tiers 1-2,
+`/v1/rates` (Bank of Mongolia USD) plus `/v1/fx` for tier 3, `/v1/fx`
+alone for foreign↔foreign - and exposes no `/convert` endpoint.
+
+**Interpretations made, not stated by the owner - confirm or correct:**
+
+- *Which bank in tier 1.* Read as "the bank the user chose": if **that**
+  bank lacks X, fall to the Bank of Mongolia, not to another bank. The
+  other reading ("only if no bank has X") would need the app to search
+  all 15 banks first.
+- *"Direct" for foreign pairs.* The owner asked for direct pairs
+  (KZT→EUR). The table is USD-based, so a non-USD pair is a ratio of two
+  of its rates. That was chosen because the API's own direct-pair
+  endpoint is *less* precise, not more - see "Why Frankfurter is a USD
+  table" for the measurements. A literal per-pair fetch remains possible
+  (`/v2/rate/A/B`, one request per pair) but would break the 4-per-day
+  ceiling and lose precision.
+- *"4 times a day".* Applied to the international source only. The
+  banks are unchanged (every 15 min during 08:00-20:00 Ulaanbaatar,
+  hourly otherwise); their freshness matters to a converter and they
+  are not metered. `CRAWL_ACTIVE_INTERVAL_MINUTES` /
+  `CRAWL_OFFPEAK_INTERVAL_MINUTES` change that if intended.
+
 ## 4. How it is built
 
 ### Flow
@@ -125,7 +191,7 @@ correctness bug, not a style question.
 | `app/models/snapshot.py` | `sources`, `rate_snapshots`, `source_state` schema. |
 | `app/api/routers/v1.py` | The public contract. Treat as frozen. |
 | `app/utils/decimals.py` | Locale-independent exact parsing. |
-| `app/crawlers/frankfurter.py` | International reference rates (not a bank). One request per currency; own call budget. Not in `HTTP_CRAWLERS`, so `crawlers/__init__.py` stays identical to upstream. |
+| `app/crawlers/frankfurter.py` | International USD-based foreign-exchange table (not a bank). One request per fetch; own call budget. Not in `HTTP_CRAWLERS`, so `crawlers/__init__.py` stays identical to upstream. |
 | `app/utils/call_budget.py` | Hard per-UTC-day ceiling on outbound requests; the scheduler refuses to start a cadence that would exceed it. |
 | `app/sources/logos.py` + `app/static/logos/` | Logo files and `manifest.json` (hash, size, provenance). Read at request time; nothing is fetched at request time. |
 | `scripts/fetch_logos.py` | Refreshes the logos and the manifest. Verifies each App Store publisher. |
@@ -150,7 +216,7 @@ All Asia/Ulaanbaatar, because banks republish on their own working day.
 | --- | --- | --- |
 | 10 JSON sources (`fast`) | every 15 min | hourly |
 | 5 Playwright sources (`slow`) | hourly | every 4 h |
-| Frankfurter (`daily`, HTTP side) | every `INTL_CRAWL_INTERVAL_HOURS` (12) around the clock, ~324 requests/day | |
+| Frankfurter (`daily`, HTTP side) | `INTL_CRAWLS_PER_DAY` = 4: 00:00, 06:00, 12:00, 18:00, one request each | same (4 requests/day) |
 
 Every trigger carries ±`CRAWL_JITTER_SECONDS` so no bank sees an exact
 interval boundary. `CRAWL_GROUP` (`all`/`fast`/`slow`) lets the
@@ -228,56 +294,73 @@ Mongolia, Capitron Bank, Bogd Bank, Chinggis Khaan Bank. Where several
 registered forms exist (Bogd: "of Mongolia" / JSC / Llc) the short
 brand is used and the variants are listed in `name_evidence`.
 
-### Why Frankfurter is built the way it is
+### Why Frankfurter is a USD table, fetched 4 times a day
 
-Everything below was read off the live API on 2026-09-29, not assumed:
+Everything below was read off the live API on 2026-09-29, not assumed.
 
-- **`/v1` cannot be used.** It is ECB-only (30 currencies) and answers
-  `{"message":"not found"}` for MNT. `/v2` lists 166 currencies and
-  serves MNT. Base URL `https://api.frankfurter.dev/v2`.
-- **One request per currency.** `/v2/rates?base=X&quotes=MNT` returns
-  `[{"date","base","quote","rate"}]` - MNT per 1 X, the feed's own
-  format. `base` takes a single currency (`base=EUR,USD` is a 422), and
-  inverting `base=MNT` is useless: the source rounds to ~5 significant
-  digits, so MNT→USD returns `0.00028`. Its direct KZT→USD is
-  `0.00227` (3 digits); KZT→MNT is `8.1477`. That is why the feed
-  carries **MNT per unit for every currency** and lets the app divide
-  for foreign↔foreign conversion: it is more precise than any direct
-  pair the source offers.
-- **Reference channel, no spread.** One blended mid figure per pair, no
-  buy/sell, no channel → `reference`/`reference`, exactly like the Bank
-  of Mongolia (invariants 2 and 3). Nothing is derived or crossed
-  through USD.
-- **It is not an independent market rate.** Rates are blended across
-  the central banks that publish the pair (`expand=providers` shows the
-  contributors). For USD/MNT they are BDI, BOM, CBKKW, CBR, CBU, NBK,
-  NBKR, NBP; BDI, BOM and CBR carry the Bank of Mongolia's own figure
-  (3595.17), NBP's is six days old (3632.14). Blend 3594.95. Treat it
-  as "what central banks say", tracking our Bank of Mongolia source.
-  The blend moves during the day as providers publish (EUR read 4093.69
-  and 4093.55 an hour apart).
-- **Excluded:** MNT itself and the four metals (XAU/XAG/XPD/XPT), which
-  the banks already publish and quote in inconsistent units.
-  Currencies whose catalogue entry ended >7 days ago are skipped.
-  161 currencies are served.
-- **Failure policy.** 404 / unpublished pair → skipped with a warning.
-  HTTP 429 and call-budget exhaustion → abort the crawl at once. More
-  than `INTL_MAX_FAILED_PERCENT` (10%) failing → the whole crawl fails
-  and the last good snapshot stays, rather than publishing holes.
-  Each response row is checked to be the pair that was asked for.
+**History of this decision (kept because it was reversed).** The first
+build fetched `base=X&quotes=MNT` once per currency (162 requests a
+crawl, MNT per unit, on `/v1/rates`). The owner's conversion policy
+(above) then made that wrong twice over: MNT rates come from Mongolian
+sources, and foreign↔foreign must not involve MNT at all. It was
+replaced by a single `GET /v2/rates?base=USD`. Requests per day fell
+from ~324 to 4.
+
+- **`/v1` cannot be used.** ECB-only, 30 currencies, and answers
+  `{"message":"not found"}` for MNT. `/v2` lists 166 currencies.
+  Base URL `https://api.frankfurter.dev/v2`.
+- **One response is the whole table.** 166 rows, each
+  `{date, base:"USD", quote, rate}` - units of `quote` per 1 USD.
+  160 are published (see exclusions).
+- **Why a table and not per-pair requests.** Frankfurter rounds every
+  pair it serves to 5 decimal places, so a small pair loses digits.
+  Measured against the ratio of two table entries:
+
+  | Pair | Direct endpoint | Via table | Direct is off by |
+  | --- | --- | --- | --- |
+  | KZT→USD | 0.00227 | 0.0022664 | **0.157%** |
+  | IDR→EUR | 0.000049 | 0.0000488703 | **0.265%** |
+  | JPY→USD | 0.00636 | 0.0063593 | 0.011% |
+  | KZT→EUR | 0.00199 | 0.0019904 | 0.020% |
+  | USD→JPY | 157.25 | 157.25 | 0 |
+  | EUR→KZT | 502.42 | 502.414 | 0.001% |
+
+  The direct pair is never better; where it differs, it is the
+  rounded one. This is why the owner's "direct" was implemented as a
+  ratio within one source's table (see Conversion policy).
+- **Reference, not a market rate.** One blended mid figure per
+  currency; no buy/sell, no channel. Modelled as the `usd_table`
+  channel (`app/sources/models.py`), a *different meaning of `rate`*
+  from every other quote (units per USD, not MNT per unit). It is
+  therefore served on `/v1/fx` and **never** on `/v1/rates`, so a client
+  cannot read 441.22 KZT-per-USD as 441.22 MNT
+  (`tests/test_fx.py::TestSeparationFromMntRates`).
+- **Blended from central banks.** `expand=providers` shows the
+  contributors; USD/MNT alone uses BDI, BOM, CBKKW, CBR, CBU, NBK, NBKR
+  and NBP, of which BDI, BOM and CBR carry the Bank of Mongolia's own
+  figure (3595.17) and NBP's is six days old. The blend moves through
+  the day as providers publish (EUR/MNT read 4093.69, then 4093.55, an
+  hour apart), which is why fetching more often than 4 times a day buys
+  little.
+- **Excluded:** MNT (policy), USD itself, and XAU/XAG/XPD/XPT (a dollar
+  buys ~0.0002 troy ounces, which 5 decimals cannot hold; the banks
+  already publish metals). 160 currencies published, KZT included.
+- **Failure policy.** A row priced against another base fails the crawl
+  (it would publish the wrong number under every code). HTTP 429 raises
+  `FrankfurterRateLimited`. A non-list body or 5xx fails the crawl and
+  the last good snapshot stays served. A pair more than 3 days behind
+  the newest is published but reported in the crawl warnings.
 - **Call budget.** Frankfurter documents no quota ("no monthly or daily
-  caps", only abuse rate-limiting), so the limit is self-imposed:
-  `INTL_DAILY_CALL_LIMIT` (1000). A crawl costs 162 requests (1
-  catalogue + 161 pairs); at 12 h that is ~324/day. `DailyCallBudget`
-  refuses the request that would cross the ceiling, and
-  `build_scheduler` raises `ValueError` at startup if the configured
-  interval would plan more than the ceiling (`INTL_CRAWL_INTERVAL_HOURS=1`
-  is rejected). A live crawl takes ~84 s from the sandbox (150 ms pause
-  between requests).
-- **Freshness.** Its stated date is the newest date across pairs.
-  `published_stale_hours=96` (not the banks' 36) because providers do
-  not publish at weekends. Status turns stale after 3 missed crawls
-  (36 h).
+  caps", only abuse rate-limiting), so the ceiling is self-imposed:
+  `INTL_CRAWLS_PER_DAY=4` (must divide 24) and `INTL_DAILY_CALL_LIMIT=4`.
+  `DailyCallBudget` refuses the request that would cross it - including
+  a manual admin crawl - and `build_scheduler` raises `ValueError` at
+  startup if the schedule plans more than the ceiling
+  (`INTL_CRAWLS_PER_DAY=24` is rejected). The counter is in-process and
+  resets on restart, matching the single-process assumption.
+- **Freshness.** Its stated date is the newest across pairs.
+  `published_stale_hours=96` (banks: 36) because providers do not
+  publish at weekends. Stale after 3 missed fetches (18 h).
 - **Licence.** Free for commercial use, but "the rates themselves fall
   under each provider's terms". Not audited per provider; the Russian
   and Kuwaiti central banks publish terms/disclaimers. Revisit before a
@@ -297,8 +380,47 @@ Terms. Facts kept for whoever revisits it: open endpoint
 updates once per 24 h and states `time_next_update_unix`, rate-limited
 (429, 20-minute cooldown) with hourly requests "never rate limited";
 registered free key 1.5k requests/month. A replacement API is being
-sought by the owner - anything added must pass the same test: does its
-licence allow republishing through an API?
+sought by the owner (Viv Data was assessed and rejected, below) -
+anything added must pass the same test: does its licence allow
+republishing through an API?
+
+### Viv Data "Currency Converter API" (API.market): do not use
+
+Assessed 2026-09-29 from its own listing (`api.market/store/viv-data/
+currency-converter`, read via the page's embedded product record) and
+API.market's Terms of Service. **Not legal advice**; the conclusion is a
+reading of their published text.
+
+- **It is a resale of ExchangeRate-API's open data.** The listing's own
+  FAQ: "Exchange rates are sourced from open.er-api.com" - the endpoint
+  rejected above. A wrapper cannot grant rights its upstream withholds,
+  and ExchangeRate-API's Terms forbid re-distribution and use in any
+  service offering programmatic access to rates. Using it would be the
+  same breach by a longer route.
+- **API.market's own Terms** (B2B only; "Sell, resell, rent, lease, or
+  otherwise commercially exploit the Services without our prior written
+  consent") point the same way for a service that republishes the data,
+  and defer everything else to each seller's terms - the seller has
+  published none.
+- **The listing contradicts itself.** Text says Free = 1,000 requests a
+  month and Pro = $19.99; the plan configuration says Free = 100 calls
+  (HARD limit) and Pro = $9.99 for 10,000. Sample responses are dated
+  2023 and show MNT at 3445. No update cadence beyond "cached for 1
+  hour".
+- **Track record:** published 2026-07-14 by an individual account;
+  analytics on the page: 3 total API calls, 1 subscriber, 0 reviews.
+- **Nothing to gain:** it needs a key and a paid plan to reach data we
+  can already read from its source, at 100-1,000 calls a month.
+
+**A candidate that looks compatible, not yet built:**
+`fawazahmed0/exchange-api` (jsDelivr / Cloudflare Pages, no key)
+declares CC0-1.0, "no rate limits", daily updates. A live read showed
+340 codes (crypto included), MNT present, 8-decimal precision, dated
+2026-09-28. **Caveat: it does not state where its numbers come from**,
+so CC0 covers the compilation but not necessarily the upstream data.
+Confirm provenance (or accept the risk knowingly) before relying on it.
+Any second source must satisfy: its licence allows republishing through
+an API.
 
 ### Why logos are hosted copies with recorded provenance
 
@@ -420,15 +542,29 @@ behind real timestamps. Drop it by hand when satisfied.
 Network access was opened mid-session, so payloads could finally be
 read; nothing above was assumed.
 
-- [x] **Frankfurter** as source #16 (`international_aggregator`,
-      reference channel, 161 currencies, MNT per unit). Verified end to
-      end against the live API: crawl → snapshot → `/v1/rates`, hash
-      stable on re-crawl, 304 works. Call budget + startup guard.
+- [x] **Frankfurter** as source #16 (`international_aggregator`).
+      *Superseded the same evening*: first built as 161 MNT-per-unit
+      quotes on `/v1/rates`; now a USD table on `/v1/fx` (below).
 - [x] **Logos** for 15 of 16 sources (`logo_url`), with provenance
       manifest and publisher verification. Naiman Sharga: none, see §5.
 - [x] **OpenAPI** snapshot + drift test; remaining v1 endpoints typed.
 - [x] Rejected ExchangeRate-API (licence) - see §5.
 - [x] 314 tests; isort/black/ruff clean.
+
+**2026-09-29 (evening) - conversion policy, USD table, 4 fetches a day.**
+
+- [x] Owner's **conversion policy** recorded as a binding requirement
+      (section "Conversion policy") with three interpretations flagged
+      for confirmation.
+- [x] Frankfurter reworked from 161 MNT-per-unit quotes to a **USD
+      table on `GET /v1/fx`** (160 currencies, one request).
+      `/v1/rates` is back to the 15 Mongolian sources.
+- [x] International fetch limited to **4 a day** (`INTL_CRAWLS_PER_DAY`),
+      4-request daily ceiling, startup guard. Verified live: one
+      request, hash stable on the second crawl, ETag/304 on `/v1/fx`.
+- [x] Viv Data / API.market assessed and rejected (resale of the
+      ExchangeRate-API data).
+- [x] 329 tests; isort/black/ruff clean.
 
 **Not done / known gaps**
 
@@ -436,8 +572,13 @@ read; nothing above was assumed.
 - [ ] **No production deployment.** Local SQLite only. A real
       deployment needs Postgres (free tiers have no persistent disk)
       and a decision on the Playwright worker split.
-- [ ] **A second international source is wanted** (ExchangeRate-API
-      rejected). Must allow republishing through an API.
+- [ ] **A second international source is wanted** (ExchangeRate-API and
+      Viv Data rejected). Must allow republishing through an API.
+      `fawazahmed0/exchange-api` (CC0) is a candidate pending a
+      provenance check.
+- [ ] **The conversion policy is not implemented anywhere yet.** The
+      backend serves the inputs; the iOS app must implement the tiers.
+      Three interpretations await the owner's confirmation.
 - [ ] **Frankfurter licence not audited per provider** (§5).
 - [ ] **Bank sites were spot-checked, not all crawled from the sandbox.**
       Khan Bank blocks datacenter IPs and NIB's certificate chain does

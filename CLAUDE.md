@@ -109,16 +109,28 @@ Read `ARCHITECTURE.md` first — it carries the why behind all of this.
   (TransBank's Mongolian name is `Тээвэр Хөгжлийн Банк`, not a phonetic
   `Транс Банк`). Change one only with new evidence, in the registry,
   the test table and ARCHITECTURE.md together.
-- **Frankfurter is source #16 and is not a bank.** It lives in
-  `app/crawlers/frankfurter.py` but is deliberately *not* in
+- **Conversion policy is the owner's binding requirement** - read
+  ARCHITECTURE.md "Conversion policy" before touching rates, `/v1/fx`
+  or the mobile brief. In one breath: foreign↔foreign uses the
+  international table only (never MNT); with MNT it is the chosen
+  bank → Bank of Mongolia → Bank of Mongolia's USD rate plus the
+  international USD leg; always say which tier was used. The app
+  implements it; the backend only serves the inputs.
+- **Frankfurter is source #16, a USD table, and not a bank.** It lives
+  in `app/crawlers/frankfurter.py` but is deliberately *not* in
   `HTTP_CRAWLERS`, keeping `crawlers/__init__.py` upstream-identical.
-  Reference channel only; never derive a rate by crossing through USD;
-  use `/v2` (v1 has no MNT); one request per currency, bounded by
-  `DailyCallBudget` - the scheduler refuses to start a cadence that
-  exceeds `INTL_DAILY_CALL_LIMIT`. Rationale: ARCHITECTURE.md §5.
-- **ExchangeRate-API is rejected** (Terms forbid redistribution through
-  an API). Do not re-add it; any replacement source must allow
-  republishing.
+  Its quotes use the `usd_table` channel (units per 1 USD) and are
+  served on `GET /v1/fx`, **never** on `/v1/rates`, whose `rate` always
+  means MNT per unit - do not mix them. Use `/v2` (v1 has no MNT); one
+  request per fetch; **4 fetches a day** (`INTL_CRAWLS_PER_DAY`, must
+  divide 24), bounded by `DailyCallBudget` (`INTL_DAILY_CALL_LIMIT`,
+  default 4) - the scheduler refuses a cadence that exceeds it. The
+  4-a-day limit applies to this source only; banks keep their own
+  cadence. Rationale and precision evidence: ARCHITECTURE.md §5.
+- **ExchangeRate-API and Viv Data (API.market) are rejected** (Terms
+  forbid redistribution through an API; Viv Data resells the same
+  data). Do not re-add them; any replacement source must allow
+  republishing through an API.
 - **Logos are hosted copies with provenance.** Refresh with
   `python -m scripts.fetch_logos`; never hot-link a bank. Naiman
   Sharga intentionally has none (`tests/test_logos.py::NO_LOGO`).

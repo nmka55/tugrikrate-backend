@@ -15,7 +15,8 @@ need the app to talk to it.
 ## The backend
 
 A FastAPI service that collects exchange rates from 15 Mongolian banks
-and serves them over one stable contract. The app must **only** call
+and institutions, plus an international USD table, and serves them over
+a stable contract. The app must **only** call
 this service — never a bank directly.
 
 - Source: https://github.com/nmka55/tugrikrate-backend
@@ -32,11 +33,12 @@ are on the same Wi-Fi.
 
 ## The endpoint
 
-`GET /v1/rates` — every source's latest rates. Optional filters:
+`GET /v1/rates` — every Mongolian source's latest rates (`GET /v1/fx`,
+the international table, is described in rule 11). Optional filters:
 `?currency=USD,EUR` and `?source=khanbank,golomtbank`.
 
 Real response (trimmed to one currency and three sources; the full
-response is 16 sources, ~200 currencies, ~750 quotes):
+response is 15 sources, 43 currencies, ~587 quotes):
 
 ```json
 {
@@ -174,29 +176,76 @@ show a neutral placeholder, and never derive one from the name. Treat
 the images as the institutions' trademarks: show them only next to that
 institution's own name and rates.
 
-**11. Frankfurter is an international reference, and how to use it
-for foreign↔foreign conversion.** `type: "international_aggregator"`,
-id `frankfurter`, 161 currencies including KZT, all with
-`channel: "reference"`, `side: "reference"` (no buy/sell). Like every
-quote, `rate` is MNT per `unit_basis` units of `currency`, so to
-convert between two foreign currencies go through the MNT prices:
+**11. Conversion policy - the app implements this, exactly.** It is the
+project owner's requirement (backend `ARCHITECTURE.md`, "Conversion
+policy"); do not substitute another source for a step.
+
+Two endpoints supply the inputs:
+
+- `GET /v1/rates` - Mongolian rates: `rate` is **MNT per `unit_basis`
+  units** of `currency`.
+- `GET /v1/fx` - the international table: `base` is `"USD"` and each
+  `rate` is **units of `currency` per 1 USD** (no MNT, no `channel`, no
+  `unit_basis`). Source `frankfurter`, 160 currencies including KZT and
+  JPY. It is fetched four times a day (00/06/12/18 Ulaanbaatar), so
+  poll it at most every 30 minutes with `If-None-Match`; a
+  `published_at` up to ~4 days old is normal over a weekend and still
+  `ok`. **Never treat an `/v1/fx` rate as MNT** - the two endpoints are
+  separate precisely so the units cannot be confused.
+
+**A. Foreign ↔ foreign (neither is MNT): `/v1/fx` only.** No MNT, no
+bank, no Bank of Mongolia.
 
 ```swift
-// 250 000 KZT -> USD, using one source's reference rates
-let mntPerKZT = kztRate / kztBasis          // Decimal, e.g. 8.1477
-let mntPerUSD = usdRate / usdBasis          // Decimal, e.g. 3594.95
-let usd = 250_000 * mntPerKZT / mntPerUSD   // ≈ 566.6 -- round only for display
+// rate(X) = units of X per 1 USD, all Decimal, from ONE source's snapshot.
+func fxConvert(_ amount: Decimal, from a: String, to b: String,
+               table: [String: Decimal]) -> Decimal? {
+    if a == b { return amount }
+    let perUSD: (String) -> Decimal? = { $0 == "USD" ? 1 : table[$0] }
+    guard let ra = perUSD(a), let rb = perUSD(b) else { return nil }
+    return amount * rb / ra          // JPY->USD, KZT->EUR, USD->KZT ...
+}
+// 250 000 KZT -> EUR with KZT 441.22, EUR 0.8782:
+//   250_000 * 0.8782 / 441.22  ==  497.60 (round only for display)
 ```
 
-Use both rates from the **same source** so they come from the same
-snapshot. The values are rounded to ~5 significant digits by the source,
-so foreign↔foreign results are indicative to roughly 0.01-0.05 % -
-fine for a converter, not for settlement. They are central-bank
-reference figures with no spread: **do not present them as a rate a
-user can transact at**. When the user is actually exchanging cash, use
-a bank's `cash` quotes instead. It is refreshed twice a day and, as it
-reflects central banks that do not publish at weekends, a
-`published_at` up to ~4 days old is normal for it and still `ok`.
+If either currency is missing from the table, say so; never fall back
+to MNT rates for a foreign pair.
+
+**B. MNT involved (the other currency is X). Try in this order and
+show the user which one was used:**
+
+1. **The chosen bank's own quote** for X - `/v1/rates`, the quote for
+   the channel the user picked. X→MNT uses the bank's **`buy`**;
+   MNT→X uses its **`sell`**. Skip a side that is absent (never treat
+   it as zero).
+2. **Bank of Mongolia reference** (`mongolbank`, `channel: "reference"`)
+   for X, used for both directions - if the chosen bank has no quote
+   for X. Label the result "reference rate", not "bank rate".
+3. **Bank of Mongolia via USD** - if `mongolbank` has no X either.
+   With `usdRef` = Bank of Mongolia's USD reference rate (MNT per USD)
+   and `perUSD` = the `/v1/fx` rate for X:
+
+   ```swift
+   // X -> MNT
+   let mnt = amountX / perUSD * usdRef
+   // MNT -> X
+   let x   = amountMNT / usdRef * perUSD
+   ```
+
+   Label it "estimated via USD" - it is a composed figure, not a rate
+   any institution quotes.
+
+Do all arithmetic in `Decimal`; the international rates carry ~5
+significant digits, so foreign results are indicative to roughly
+0.01-0.05 %, fine for a converter and not for settlement. Tier 2 and 3
+figures are reference values: **do not present them as rates the user
+can transact at.** When the user is actually exchanging cash, use a
+bank's `cash` quotes.
+
+**Not yet confirmed by the owner:** whether tier 1 → 2 happens when the
+*chosen* bank lacks X (assumed here) or only when *no* bank has it.
+Build the tier logic so that is a one-line change.
 
 **12. `type` is non-exhaustive.** Now one of `commercial_bank`,
 `central_bank`, `exchange_bureau`, `remittance`,

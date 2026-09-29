@@ -18,8 +18,22 @@ CHANNEL_REFERENCE = "reference"
 # which channel it applies to. Never a guess dressed up as a fact.
 CHANNEL_UNSPECIFIED = "unspecified"
 
+# A foreign-exchange table, not a Mongolian quote: `rate` is how many
+# units of `currency` one US dollar buys, and MNT is not involved at
+# all. Only international sources use it (Frankfurter) and they are
+# served by GET /v1/fx, never GET /v1/rates, whose `rate` always means
+# MNT per unit. Mixing the two meanings in one feed would let a client
+# read 441.22 KZT-per-USD as 441.22 MNT.
+CHANNEL_USD_TABLE = "usd_table"
+
 CHANNELS = frozenset(
-    {CHANNEL_CASH, CHANNEL_NONCASH, CHANNEL_REFERENCE, CHANNEL_UNSPECIFIED}
+    {
+        CHANNEL_CASH,
+        CHANNEL_NONCASH,
+        CHANNEL_REFERENCE,
+        CHANNEL_UNSPECIFIED,
+        CHANNEL_USD_TABLE,
+    }
 )
 
 # Sides, always from the *bank's* perspective: `buy` is what the source
@@ -38,7 +52,9 @@ DEFAULT_UNIT_BASIS = Decimal(1)
 
 @dataclass(frozen=True, slots=True)
 class Quote:
-    """One published number. `rate` is MNT per `unit_basis` units."""
+    """One published number. `rate` is MNT per `unit_basis` units -
+    except on the `usd_table` channel, where it is units of `currency`
+    per 1 USD (see CHANNEL_USD_TABLE)."""
 
     currency: str
     channel: str

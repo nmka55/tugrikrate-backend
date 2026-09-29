@@ -36,8 +36,8 @@ def is_active_hours(at: datetime | None = None) -> bool:
 def interval_minutes(spec: SourceSpec, at: datetime | None = None) -> int:
     """Expected minutes between crawls of this source right now."""
     if spec.cadence == CADENCE_DAILY:
-        # Not tied to banking hours: it publishes once a day.
-        return config.INTL_CRAWL_INTERVAL_HOURS * 60
+        # Not tied to banking hours: it publishes a daily table.
+        return 24 * 60 // config.INTL_CRAWLS_PER_DAY
     base = (
         config.CRAWL_ACTIVE_INTERVAL_MINUTES
         if is_active_hours(at)

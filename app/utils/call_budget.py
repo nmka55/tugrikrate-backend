@@ -56,10 +56,3 @@ class DailyCallBudget:
                     f"({self._used} used, {calls} requested)"
                 )
             self._used += calls
-
-
-def planned_daily_calls(interval_hours: int, calls_per_crawl: int) -> int:
-    """Calls per UTC day the schedule will make, rounded up so a
-    non-divisor interval is never under-counted."""
-    crawls_per_day = -(-24 // interval_hours)
-    return crawls_per_day * calls_per_crawl

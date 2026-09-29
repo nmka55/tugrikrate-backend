@@ -549,192 +549,170 @@ class TestCrawlerRegistration:
 
 
 class TestFrankfurter:
-    """Payload shapes below are copied from live responses of
-    api.frankfurter.dev/v2 read on 2026-09-29."""
-
-    CURRENCIES = [
-        {"iso_code": "USD", "end_date": TODAY},
-        {"iso_code": "KZT", "end_date": TODAY},
-        {"iso_code": "MNT", "end_date": TODAY},
-        {"iso_code": "XAU", "end_date": TODAY},
-        {"iso_code": "DEM", "end_date": "2001-12-31"},
-    ]
+    """Row shape copied from the live response of
+    GET api.frankfurter.dev/v2/rates?base=USD, read on 2026-09-29."""
 
     @staticmethod
-    def route(rates, currencies=None, status=None):
-        """A fake `get` keyed on the requested base currency."""
+    def row(quote, rate, date=TODAY, base="USD"):
+        return {"date": date, "base": base, "quote": quote, "rate": rate}
 
-        def fake(self, url, **kwargs):
-            if url.endswith("/currencies"):
-                return mock_response(
-                    currencies
-                    if currencies is not None
-                    else TestFrankfurter.CURRENCIES
-                )
-            base = kwargs["params"]["base"]
-            code = (status or {}).get(base, 200)
-            if code != 200:
-                resp = mock_response({"message": "x"}, status_code=code)
-                resp.headers = {}
-                if code >= 400:
-                    resp.raise_for_status.side_effect = requests.HTTPError(
-                        str(code)
-                    )
-                return resp
-            value = rates[base]
-            return mock_response(
-                [
-                    {
-                        "date": TODAY,
-                        "base": value.get("base", base),
-                        "quote": "MNT",
-                        "rate": value["rate"],
-                    }
-                ]
-            )
-
-        return fake
-
-    def crawler(self, monkeypatch, rates, **kwargs):
-        from app.config import config
+    def crawler(self, monkeypatch, rows, status=200):
         from app.crawlers import frankfurter as mod
 
-        monkeypatch.setattr(config, "INTL_REQUEST_PAUSE_MS", 0)
-        monkeypatch.setattr(mod, "BUDGET", mod.DailyCallBudget(1000))
-        monkeypatch.setattr(
-            mod.Frankfurter, "get", self.route(rates, **kwargs)
-        )
-        return mod.Frankfurter(TODAY)
+        calls = []
 
-    def test_rates_are_exact_decimals_in_mnt_per_unit(self, monkeypatch):
+        def fake(self, url, **kwargs):
+            calls.append((url, kwargs))
+            resp = mock_response(rows, status_code=status)
+            resp.headers = {}
+            if status >= 400:
+                resp.raise_for_status.side_effect = requests.HTTPError(
+                    str(status)
+                )
+            return resp
+
+        monkeypatch.setattr(mod, "BUDGET", mod.DailyCallBudget(100))
+        monkeypatch.setattr(mod.Frankfurter, "get", fake)
+        crawler = mod.Frankfurter(TODAY)
+        crawler.calls = calls
+        return crawler
+
+    def test_the_whole_table_costs_exactly_one_request(self, monkeypatch):
         crawler = self.crawler(
             monkeypatch,
-            {
-                "USD": {"rate": "3594.95"},
-                "KZT": {"rate": "8.1477"},
-            },
-        )
-        rates = crawler.crawl()
-
-        assert rates["usd"].cash.buy == Decimal("3594.95")
-        assert rates["kzt"].cash.buy == Decimal("8.1477")
-        assert isinstance(rates["kzt"].cash.buy, Decimal)
-        # The reference is written once; nothing is copied elsewhere.
-        assert rates["usd"].cash.sell is None
-        assert rates["usd"].noncash.buy is None
-
-    def test_json_numbers_never_become_floats(self, monkeypatch):
-        """The live API sends bare numbers (3594.95, 15001054)."""
-        crawler = self.crawler(
-            monkeypatch,
-            {"USD": {"rate": 3594.95}, "KZT": {"rate": 8.1477}},
-        )
-        # mock_response dumps the float back to text, as the wire does;
-        # json_exact then reads it straight into Decimal.
-        rates = crawler.crawl()
-        assert rates["usd"].cash.buy == Decimal("3594.95")
-
-    def test_mnt_and_metals_and_retired_currencies_are_not_requested(
-        self, monkeypatch
-    ):
-        crawler = self.crawler(
-            monkeypatch,
-            {"USD": {"rate": "3594.95"}, "KZT": {"rate": "8.1477"}},
-        )
-        assert crawler._currency_codes() == ["KZT", "USD"]
-
-    def test_records_the_newest_stated_date_and_a_stable_payload(
-        self, monkeypatch
-    ):
-        crawler = self.crawler(
-            monkeypatch,
-            {"USD": {"rate": "3594.95"}, "KZT": {"rate": "8.1477"}},
+            [self.row("KZT", 441.22), self.row("EUR", 0.8782)],
         )
         crawler.crawl()
-        assert crawler.published_date == datetime.date.fromisoformat(TODAY)
-        payload = json.loads(crawler.raw_payload)
-        assert payload == [
-            {"base": "KZT", "date": TODAY, "rate": "8.1477"},
-            {"base": "USD", "date": TODAY, "rate": "3594.95"},
-        ]
 
-    def test_an_unpublished_pair_is_skipped_not_invented(self, monkeypatch):
+        assert len(crawler.calls) == 1
+        url, kwargs = crawler.calls[0]
+        assert url.endswith("/rates")
+        assert kwargs["params"] == {"base": "USD"}
+
+    def test_rates_are_exact_decimals_never_floats(self, monkeypatch):
         crawler = self.crawler(
             monkeypatch,
-            {"USD": {"rate": "3594.95"}, "KZT": {"rate": "0"}},
+            [self.row("KZT", 441.22), self.row("JPY", 157.25)],
         )
         rates = crawler.crawl()
-        assert set(rates) == {"usd"}
 
-    def test_not_found_is_skipped_with_a_warning(self, monkeypatch):
-        crawler = self.crawler(
-            monkeypatch,
-            {"USD": {"rate": "3594.95"}, "KZT": {"rate": "1"}},
-            status={"KZT": 404},
-        )
-        rates = crawler.crawl()
-        assert set(rates) == {"usd"}
-        assert any("KZT" in w for w in crawler.warnings)
+        assert rates["kzt"].cash.buy == Decimal("441.22")
+        assert rates["jpy"].cash.buy == Decimal("157.25")
+        assert isinstance(rates["kzt"].cash.buy, Decimal)
+        # Written once; nothing is copied into another cell.
+        assert rates["kzt"].cash.sell is None
+        assert rates["kzt"].noncash.buy is None
 
-    def test_a_mislabelled_pair_is_never_published_under_the_wrong_code(
+    def test_mnt_metals_and_the_base_itself_are_not_published(
         self, monkeypatch
     ):
-        from app.config import config
-
-        # Tolerate the one bad row so the crawl completes and we can
-        # see what was (not) published.
-        monkeypatch.setattr(config, "INTL_MAX_FAILED_PERCENT", 100)
         crawler = self.crawler(
             monkeypatch,
-            {
-                "USD": {"rate": "3594.95"},
-                # Asked for KZT, the API answered with an EUR row.
-                "KZT": {"rate": "4093.69", "base": "EUR"},
-            },
+            [
+                self.row("KZT", 441.22),
+                self.row("MNT", 3594.95),
+                self.row("XAU", 0.00024),
+                self.row("XAG", 0.02),
+                self.row("XPD", 0.0007),
+                self.row("XPT", 0.001),
+                self.row("USD", 1),
+            ],
+        )
+        assert set(crawler.crawl()) == {"kzt"}
+
+    def test_an_unpublished_rate_is_skipped_not_invented(self, monkeypatch):
+        crawler = self.crawler(
+            monkeypatch, [self.row("KZT", 441.22), self.row("EUR", 0)]
+        )
+        assert set(crawler.crawl()) == {"kzt"}
+
+    def test_a_row_priced_against_another_base_fails_the_crawl(
+        self, monkeypatch
+    ):
+        import pytest
+
+        crawler = self.crawler(
+            monkeypatch, [self.row("KZT", 4093.69, base="EUR")]
+        )
+        with pytest.raises(ValueError, match="base"):
+            crawler.crawl()
+
+    def test_a_non_list_body_fails_the_crawl(self, monkeypatch):
+        import pytest
+
+        crawler = self.crawler(monkeypatch, {"message": "not found"})
+        with pytest.raises(ValueError, match="list"):
+            crawler.crawl()
+
+    def test_records_the_newest_date_and_a_stable_payload(self, monkeypatch):
+        yesterday = (
+            datetime.date.fromisoformat(TODAY) - datetime.timedelta(days=1)
+        ).isoformat()
+        crawler = self.crawler(
+            monkeypatch,
+            [
+                self.row("USDX", 1, date=yesterday),
+                self.row("KZT", 441.22),
+                self.row("EUR", 0.8782, date=yesterday),
+            ],
+        )
+        crawler.crawl()
+
+        assert crawler.published_date == datetime.date.fromisoformat(TODAY)
+        assert json.loads(crawler.raw_payload) == [
+            {"date": yesterday, "quote": "EUR", "rate": "0.8782"},
+            {"date": TODAY, "quote": "KZT", "rate": "441.22"},
+            {"date": yesterday, "quote": "USDX", "rate": "1"},
+        ]
+
+    def test_a_pair_far_behind_the_rest_is_reported(self, monkeypatch):
+        old = (
+            datetime.date.fromisoformat(TODAY) - datetime.timedelta(days=9)
+        ).isoformat()
+        crawler = self.crawler(
+            monkeypatch,
+            [self.row("KZT", 441.22), self.row("ZWG", 26.5, date=old)],
         )
         rates = crawler.crawl()
 
-        assert set(rates) == {"usd"}
-        assert any("KZT" in w for w in crawler.warnings)
+        assert "zwg" in rates  # still published, but not silently
+        assert any("ZWG" in w for w in crawler.warnings)
 
-    def test_rate_limiting_stops_the_crawl_immediately(self, monkeypatch):
+    def test_currency_filter_from_config(self, monkeypatch):
+        from app.config import config
+
+        monkeypatch.setattr(config, "FRANKFURTER_CURRENCIES", ["kzt"])
+        crawler = self.crawler(
+            monkeypatch, [self.row("KZT", 441.22), self.row("EUR", 0.8782)]
+        )
+        assert set(crawler.crawl()) == {"kzt"}
+
+    def test_rate_limiting_raises_a_specific_error(self, monkeypatch):
         import pytest
 
         from app.crawlers.frankfurter import FrankfurterRateLimited
 
-        crawler = self.crawler(
-            monkeypatch,
-            {"USD": {"rate": "1"}, "KZT": {"rate": "1"}},
-            status={"KZT": 429, "USD": 429},
-        )
+        crawler = self.crawler(monkeypatch, [], status=429)
         with pytest.raises(FrankfurterRateLimited):
             crawler.crawl()
 
-    def test_too_many_failures_fail_the_crawl_so_the_last_snapshot_stays(
-        self, monkeypatch
-    ):
+    def test_a_server_error_fails_the_crawl(self, monkeypatch):
         import pytest
 
-        crawler = self.crawler(
-            monkeypatch,
-            {"USD": {"rate": "3594.95"}, "KZT": {"rate": "1"}},
-            status={"KZT": 500},
-        )
-        with pytest.raises(RuntimeError, match="KZT"):
+        crawler = self.crawler(monkeypatch, [], status=500)
+        with pytest.raises(requests.HTTPError):
             crawler.crawl()
 
-    def test_the_call_budget_stops_the_crawl_before_the_limit(
+    def test_the_call_budget_refuses_the_request_past_the_limit(
         self, monkeypatch
     ):
         import pytest
 
         from app.crawlers import frankfurter as mod
-        from app.utils.call_budget import CallBudgetExceeded, DailyCallBudget
 
-        crawler = self.crawler(
-            monkeypatch,
-            {"USD": {"rate": "1"}, "KZT": {"rate": "1"}},
-        )
-        monkeypatch.setattr(mod, "BUDGET", DailyCallBudget(2))
-        with pytest.raises(CallBudgetExceeded):
-            crawler.crawl()  # 1 catalogue call + 2 pairs = 3 > 2
+        crawler = self.crawler(monkeypatch, [self.row("KZT", 441.22)])
+        monkeypatch.setattr(mod, "BUDGET", mod.DailyCallBudget(1))
+        crawler.crawl()
+        with pytest.raises(mod.CallBudgetExceeded):
+            crawler.crawl()
+        assert len(crawler.calls) == 1  # the second was never sent

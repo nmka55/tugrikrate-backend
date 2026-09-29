@@ -4,11 +4,7 @@ from datetime import date
 
 import pytest
 
-from app.utils.call_budget import (
-    CallBudgetExceeded,
-    DailyCallBudget,
-    planned_daily_calls,
-)
+from app.utils.call_budget import CallBudgetExceeded, DailyCallBudget
 
 
 class TestDailyCallBudget:
@@ -41,12 +37,3 @@ class TestDailyCallBudget:
     def test_rejects_a_nonsensical_limit(self):
         with pytest.raises(ValueError):
             DailyCallBudget(0)
-
-
-class TestPlannedDailyCalls:
-    def test_twelve_hourly_is_two_crawls_a_day(self):
-        assert planned_daily_calls(12, 162) == 324
-
-    def test_non_divisor_interval_rounds_up(self):
-        # 24 // 7 == 3 would under-count; 4 crawls can actually fire.
-        assert planned_daily_calls(7, 100) == 400

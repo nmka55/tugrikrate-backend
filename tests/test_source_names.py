@@ -69,9 +69,10 @@ def test_names_are_unique():
     assert len({s.name_mn for s in SPECS}) == len(SPECS)
 
 
-def test_names_reach_the_feed(client, test_db):
-    body = client.get("/v1/rates").json()
-    feed = {s["id"]: (s["name"], s["name_mn"]) for s in body["sources"]}
+def test_names_reach_the_feeds(client, test_db):
+    rates = client.get("/v1/rates").json()["sources"]
+    fx = client.get("/v1/fx").json()["sources"]
+    feed = {s["id"]: (s["name"], s["name_mn"]) for s in rates + fx}
     assert feed == OFFICIAL_NAMES
 
 

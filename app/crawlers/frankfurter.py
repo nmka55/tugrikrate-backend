@@ -1,51 +1,60 @@
-"""Frankfurter - international reference rates, quoted in MNT.
+"""Frankfurter - the international foreign-exchange table.
 
-Not a bank. Frankfurter blends daily central-bank publications (104
-providers at time of writing) into one figure per currency pair.
+Not a bank, and not a source of MNT rates. It supplies what the
+Mongolian sources cannot: how many units of any currency one US dollar
+buys, so the app can convert foreign to foreign without touching MNT,
+and complete the "MNT -> USD -> currency" fallback (ARCHITECTURE.md,
+"Conversion policy").
 
-Why v2 and per-currency requests (all verified against the live API on
-2026-09-29, see ARCHITECTURE.md):
+One request per crawl: `GET /v2/rates?base=USD` returns every currency
+against the dollar (verified 2026-09-29: 166 rows, each `{date, base,
+quote, rate}`). This replaced an earlier design of one request per
+currency for MNT-per-unit quotes, which cost 162 requests a crawl and
+served a rate the conversion policy never uses.
 
-- `/v1` is ECB-only, 30 currencies, and answers `{"message":"not
-  found"}` for MNT. `/v2` serves 166 currencies including MNT.
-- `base=X&quotes=MNT` returns MNT per 1 X directly, which is the feed's
-  format. Inverting `base=MNT` instead is unusable: the source rounds
-  to ~5 significant digits, so MNT->USD comes back as 0.00028.
-- `base` accepts one currency, so one request is needed per currency.
-  That is what the call budget in app/utils/call_budget.py bounds.
+Why the USD table and not a request per pair: Frankfurter's own direct
+pair endpoint (`/v2/rate/KZT/USD`) rounds each pair to 5 decimal
+places, so small pairs lose precision (KZT->USD 0.00227, 0.157% off;
+IDR->EUR 0.265% off). Dividing two entries of this table is within
+rounding of the pair everywhere it was measured, and never worse.
 
-The crawler returns the reference rate once, in cash.buy, exactly like
-the Bank of Mongolia one - it is a single mid figure with no spread and
-no channel, and app/sources/registry.py maps it to reference/reference.
+The rate is written once into cash.buy, which app/sources/registry.py
+maps to the `usd_table` channel.
 """
 
 import json
-import time
-from datetime import date
+from datetime import date, timedelta
 from typing import Dict, List
 
 from app.config import config
 from app.crawlers.base import BaseCrawler
 from app.models.exchange_rate import CurrencyDetail
 from app.utils.call_budget import CallBudgetExceeded, DailyCallBudget
-from app.utils.logger import logger
 
-QUOTE_CURRENCY = "MNT"
+BASE_CURRENCY = "USD"
 
-# Precious metals are quoted per troy ounce here while the banks quote
-# them per gram or per ounce inconsistently (registry.py explains the
-# 32x gap), so they are left to the banks that publish them.
-METAL_CODES = frozenset({"XAU", "XAG", "XPD", "XPT"})
+# MNT is excluded because the conversion policy never takes an MNT rate
+# from a foreign source. Precious metals are left to the banks that
+# publish them: Frankfurter prices them per troy ounce, so a dollar
+# buys ~0.0002 of one, which 5 decimal places cannot represent.
+EXCLUDED_CODES = frozenset({"MNT", "XAU", "XAG", "XPD", "XPT"})
 
-# A currency whose catalogue entry ended before this many days ago is
-# discontinued, and would only ever return "not found".
-MAX_CATALOGUE_AGE_DAYS = 7
+# A pair this many days behind the newest is reported, not hidden: the
+# blend legitimately lags by a day when a provider has not published.
+LAG_WARNING_DAYS = 3
 
 BUDGET = DailyCallBudget(config.INTL_DAILY_CALL_LIMIT)
 
+__all__ = [
+    "BUDGET",
+    "CallBudgetExceeded",
+    "Frankfurter",
+    "FrankfurterRateLimited",
+]
+
 
 class FrankfurterRateLimited(RuntimeError):
-    """HTTP 429: stop immediately rather than retry into a limiter."""
+    """HTTP 429: stop rather than retry into a limiter."""
 
 
 class Frankfurter(BaseCrawler):
@@ -56,122 +65,77 @@ class Frankfurter(BaseCrawler):
         # Non-fatal notes for the adapter to surface on the CrawlResult.
         self.warnings: List[str] = []
 
-    # -- requests ---------------------------------------------------
-
-    def _get_json(self, path: str, **params):
+    def crawl(self) -> Dict[str, CurrencyDetail]:
         BUDGET.spend()
-        response = self.get(f"{config.FRANKFURTER_URI}{path}", params=params)
+        response = self.get(
+            f"{config.FRANKFURTER_URI}/rates", params={"base": BASE_CURRENCY}
+        )
         if response.status_code == 429:
             raise FrankfurterRateLimited(
-                f"{path}: HTTP 429, retry-after "
+                "HTTP 429, retry-after "
                 f"{response.headers.get('Retry-After', 'unstated')}"
             )
-        return response
-
-    def _currency_codes(self) -> List[str]:
-        if config.FRANKFURTER_CURRENCIES:
-            wanted = [c.upper() for c in config.FRANKFURTER_CURRENCIES]
-        else:
-            response = self._get_json("/currencies")
-            response.raise_for_status()
-            wanted = [
-                row["iso_code"]
-                for row in self.json_exact(response)
-                if self._is_current(row)
-            ]
-        return sorted(
-            {c for c in wanted if c != QUOTE_CURRENCY and c not in METAL_CODES}
-        )
-
-    def _is_current(self, row: dict) -> bool:
-        try:
-            ended = date.fromisoformat(str(row["end_date"]))
-            today = date.fromisoformat(self.date)
-        except (KeyError, TypeError, ValueError):
-            return True
-        return (today - ended).days <= MAX_CATALOGUE_AGE_DAYS
-
-    # -- crawl ------------------------------------------------------
-
-    def crawl(self) -> Dict[str, CurrencyDetail]:
-        codes = self._currency_codes()
-        rates: Dict[str, CurrencyDetail] = {}
-        rows = []
-        failed: List[str] = []
-
-        for index, code in enumerate(codes):
-            if index and config.INTL_REQUEST_PAUSE_MS:
-                time.sleep(config.INTL_REQUEST_PAUSE_MS / 1000)
-            try:
-                row = self._fetch_pair(code)
-            except (FrankfurterRateLimited, CallBudgetExceeded):
-                # Not a problem with this currency: stop sending.
-                raise
-            except Exception as exc:
-                failed.append(code)
-                logger.warning(f"frankfurter: {code} failed - {exc}")
-                continue
-            if row is None:
-                self.warnings.append(
-                    f"frankfurter: no {code}->{QUOTE_CURRENCY} rate"
-                )
-                continue
-            rows.append(row)
-            rates[code.lower()] = self.make_rate(cash_buy=row["rate"])
-
-        self._check_failures(failed, len(codes))
-        self._record(rows)
-        return rates
-
-    def _fetch_pair(self, code: str):
-        response = self._get_json("/rates", base=code, quotes=QUOTE_CURRENCY)
-        if response.status_code == 404:
-            return None
         response.raise_for_status()
+
         payload = self.json_exact(response)
-        row = payload[0] if isinstance(payload, list) and payload else None
+        if not isinstance(payload, list):
+            raise ValueError(
+                f"expected a list of rates, got {type(payload).__name__}"
+            )
+
+        wanted = {c.upper() for c in config.FRANKFURTER_CURRENCIES}
+        rows = []
+        for row in payload:
+            parsed = self._parse_row(row, wanted)
+            if parsed is not None:
+                rows.append(parsed)
+
+        rows.sort(key=lambda r: r["quote"])
+        self._record(rows)
+        return {
+            row["quote"].lower(): self.make_rate(cash_buy=row["rate"])
+            for row in rows
+        }
+
+    def _parse_row(self, row, wanted):
         if not isinstance(row, dict):
             return None
-        # Trust the row, not the request: a mislabelled pair would
-        # publish some other currency's rate under this code.
-        if row.get("base") != code or row.get("quote") != QUOTE_CURRENCY:
+        # Trust the row, not the request: a row priced against some
+        # other base would publish the wrong number under every code.
+        if row.get("base") != BASE_CURRENCY:
             raise ValueError(
-                f"asked {code}->{QUOTE_CURRENCY}, got "
-                f"{row.get('base')}->{row.get('quote')}"
+                f"asked for base {BASE_CURRENCY}, got {row.get('base')!r}"
             )
+        code = str(row.get("quote") or "").upper()
+        if not code or code in EXCLUDED_CODES or code == BASE_CURRENCY:
+            return None
+        if wanted and code not in wanted:
+            return None
         rate = self.parse_float(row.get("rate"))
         stated = str(row.get("date") or "")
         if rate is None or not stated:
             return None
-        return {"base": code, "date": stated, "rate": rate}
-
-    def _check_failures(self, failed: List[str], total: int) -> None:
-        if not failed:
-            return
-        limit = total * config.INTL_MAX_FAILED_PERCENT / 100
-        if len(failed) > limit:
-            raise RuntimeError(
-                f"{len(failed)}/{total} currencies failed "
-                f"(max {config.INTL_MAX_FAILED_PERCENT}%): "
-                f"{', '.join(failed[:8])}"
-            )
-        self.warnings.append(
-            f"frankfurter: {len(failed)} currency request(s) failed: "
-            f"{', '.join(failed)}"
-        )
+        return {"quote": code, "date": stated, "rate": rate}
 
     def _record(self, rows: List[dict]) -> None:
-        """Hash over the extracted rows, never the raw responses, and
-        with rates as strings so no digit is lost to a float."""
+        """Hash over the extracted rows - with rates as strings, so no
+        digit is lost to a float - never over the raw response."""
         if not rows:
             return
-        rows = sorted(rows, key=lambda r: r["base"])
         self.record_payload(
             json.dumps(
                 rows, default=str, sort_keys=True, separators=(",", ":")
             )
         )
-        # The batch is as fresh as its newest stated date; blended pairs
-        # legitimately lag by a day when a provider has not yet
-        # published.
-        self.published_date = max(date.fromisoformat(r["date"]) for r in rows)
+        newest = max(date.fromisoformat(r["date"]) for r in rows)
+        self.published_date = newest
+        cutoff = newest - timedelta(days=LAG_WARNING_DAYS)
+        lagging = [
+            r["quote"] for r in rows if date.fromisoformat(r["date"]) < cutoff
+        ]
+        if lagging:
+            self.warnings.append(
+                f"frankfurter: {len(lagging)} pair(s) more than "
+                f"{LAG_WARNING_DAYS} days behind {newest}: "
+                f"{', '.join(lagging[:8])}"
+            )
