@@ -52,6 +52,14 @@
 - Viv Data "Currency Converter API" (API.market): a resale of the same
   ExchangeRate-API data, so the same restriction applies. See §5.
 
+### Decided
+
+- Foreign↔foreign conversion pivots through USD (X → USD → Y); only
+  USD-based tables are downloaded, never per-pair rates. Confirmed by
+  the owner.
+- fxratesapi.com assessed: usable only if `/v1/fx` is restricted to our
+  own app (it is public today). Not added yet. See ARCHITECTURE.md §5.
+
 ## [2.0.0] - 2026-09-29
 
 Fork of [btseee/mongolian-bank-exchange-rate](https://github.com/btseee/mongolian-bank-exchange-rate)

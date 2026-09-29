@@ -193,20 +193,24 @@ Two endpoints supply the inputs:
   `ok`. **Never treat an `/v1/fx` rate as MNT** - the two endpoints are
   separate precisely so the units cannot be confused.
 
-**A. Foreign ↔ foreign (neither is MNT): `/v1/fx` only.** No MNT, no
-bank, no Bank of Mongolia.
+**A. Foreign ↔ foreign (neither is MNT): `/v1/fx` only, pivoting
+through USD.** No MNT, no bank, no Bank of Mongolia. The backend only
+downloads USD-based rates (a table of every pair would be ~25,600
+numbers), so every foreign pair is computed **X → USD → Y** - confirmed
+by the project owner.
 
 ```swift
-// rate(X) = units of X per 1 USD, all Decimal, from ONE source's snapshot.
+// perUSD(X) = units of X per 1 USD, all Decimal, from ONE source's snapshot.
 func fxConvert(_ amount: Decimal, from a: String, to b: String,
                table: [String: Decimal]) -> Decimal? {
     if a == b { return amount }
     let perUSD: (String) -> Decimal? = { $0 == "USD" ? 1 : table[$0] }
     guard let ra = perUSD(a), let rb = perUSD(b) else { return nil }
-    return amount * rb / ra          // JPY->USD, KZT->EUR, USD->KZT ...
+    let usd = amount / ra            // X -> USD
+    return usd * rb                  // USD -> Y
 }
-// 250 000 KZT -> EUR with KZT 441.22, EUR 0.8782:
-//   250_000 * 0.8782 / 441.22  ==  497.60 (round only for display)
+// 250 000 KZT -> CNY with KZT 441.22, CNY 6.71:
+//   250_000 / 441.22 = 566.61 USD;  566.61 * 6.71 = 3801.9 CNY
 ```
 
 If either currency is missing from the table, say so; never fall back

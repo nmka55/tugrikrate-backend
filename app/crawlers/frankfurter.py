@@ -12,6 +12,10 @@ quote, rate}`). This replaced an earlier design of one request per
 currency for MNT-per-unit quotes, which cost 162 requests a crawl and
 served a rate the conversion policy never uses.
 
+The owner confirmed the design: the server downloads only USD-based
+rates, and every foreign pair is computed X -> USD -> Y by the app. A
+table of every pair would be ~25,600 rates.
+
 Why the USD table and not a request per pair: Frankfurter's own direct
 pair endpoint (`/v2/rate/KZT/USD`) rounds each pair to 5 decimal
 places, so small pairs lose precision (KZT->USD 0.00227, 0.157% off;

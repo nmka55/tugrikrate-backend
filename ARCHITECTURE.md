@@ -79,12 +79,23 @@ which rates the app converts with. Do not "improve" it by routing a
 conversion through a different source than it names.
 
 **Foreign to foreign** (neither currency is MNT), e.g. JPY→USD,
-KZT→EUR: use the **international source only** (`GET /v1/fx`). No MNT,
+KZT→CNY: use the **international source only** (`GET /v1/fx`). No MNT,
 no Mongolian bank, no Bank of Mongolia is involved.
 
+**USD is the pivot - confirmed by the owner (2026-09-29).** The server
+downloads *only* USD-based rates from a foreign source: one table of
+"units of X per 1 USD". Every foreign pair goes **X → USD → Y**. Rates
+are never downloaded per pair: a direct table for every pair on the
+planet is ~160² ≈ 25,600 rates - infeasible to fetch, store or keep
+fresh, and (measured) *less* precise than the pivot anyway.
+
 - USD→X is the table's rate; X→USD is `1 / rate`.
-- X→Y with neither USD: `amount × rate_Y / rate_X`, both rates taken
-  from the **same source's same snapshot**.
+- X→Y with neither USD: X→USD then USD→Y, i.e.
+  `amount ÷ rate_X × rate_Y` - both rates from the **same source's same
+  snapshot**. Example, KZT→CNY: `amount ÷ 441.22 × 6.71`.
+- A foreign source is acceptable only if it can serve that USD table
+  in one request; anything that needs a request per currency or per
+  pair breaks the 4-a-day ceiling.
 
 **MNT involved** (the other currency is X), in this order:
 
@@ -119,19 +130,12 @@ cases). The backend supplies the inputs - `/v1/rates` for tiers 1-2,
 `/v1/rates` (Bank of Mongolia USD) plus `/v1/fx` for tier 3, `/v1/fx`
 alone for foreign↔foreign - and exposes no `/convert` endpoint.
 
-**Interpretations made, not stated by the owner - confirm or correct:**
+**Interpretations still awaiting the owner's confirmation:**
 
 - *Which bank in tier 1.* Read as "the bank the user chose": if **that**
   bank lacks X, fall to the Bank of Mongolia, not to another bank. The
   other reading ("only if no bank has X") would need the app to search
   all 15 banks first.
-- *"Direct" for foreign pairs.* The owner asked for direct pairs
-  (KZT→EUR). The table is USD-based, so a non-USD pair is a ratio of two
-  of its rates. That was chosen because the API's own direct-pair
-  endpoint is *less* precise, not more - see "Why Frankfurter is a USD
-  table" for the measurements. A literal per-pair fetch remains possible
-  (`/v2/rate/A/B`, one request per pair) but would break the 4-per-day
-  ceiling and lose precision.
 - *"4 times a day".* Applied to the international source only. The
   banks are unchanged (every 15 min during 08:00-20:00 Ulaanbaatar,
   hourly otherwise); their freshness matters to a converter and they
@@ -326,8 +330,8 @@ from ~324 to 4.
   | EUR→KZT | 502.42 | 502.414 | 0.001% |
 
   The direct pair is never better; where it differs, it is the
-  rounded one. This is why the owner's "direct" was implemented as a
-  ratio within one source's table (see Conversion policy).
+  rounded one. Together with the size of an all-pairs table, this is
+  why the owner confirmed the USD pivot (see Conversion policy).
 - **Reference, not a market rate.** One blended mid figure per
   currency; no buy/sell, no channel. Modelled as the `usd_table`
   channel (`app/sources/models.py`), a *different meaning of `rate`*
@@ -421,6 +425,68 @@ so CC0 covers the compilation but not necessarily the upstream data.
 Confirm provenance (or accept the risk knowingly) before relying on it.
 Any second source must satisfy: its licence allows republishing through
 an API.
+
+### fxratesapi.com: usable, with conditions - not built yet
+
+Assessed 2026-09-29 by the owner's request. Read directly: the Terms &
+Conditions and Permitted & Prohibited Uses (both v1.0, 28.11.2022; the
+site is client-rendered, so the text was read from its page bundles),
+the FAQ, and a live keyless response. **Not legal advice.**
+
+Operator: Saritra GmbH, Vienna (FN502707a). Data: "derived from a wide
+range of commercial sources, private banks and national banks",
+updated every minute - **their own compilation**, licensed by them,
+unlike Viv Data (a resale) or fawazahmed0 (provenance unstated).
+
+What the licence allows (T&C, "Scope of the fxRatesAPI API License"):
+"receive, process, and display fxRatesAPI API Data & Services to
+individual end-users of your application(s), provided such end users
+use [it] strictly for their own personal use [and] You do not permit
+Your end users to store, distribute, or otherwise exploit" it; "solely
+... for reference by Your end users"; "under no circumstances whatsoever
+may You transfer ... outside of your application(s)". The FAQ endorses
+our shape: "When you only send requests to the API from your backend
+and cache the data on your end you can rest assured that we will
+consider this fair use." Attribution: "would be highly appreciated"
+(requested, not required).
+
+A consumer converter that shows reference rates fits that. **What does
+not fit today:**
+
+1. **`/v1/fx` is an open public API.** Anyone can call it, which is
+   "transfer outside of your application" and "provide access to ...
+   the Services through ... the Internet" (Prohibited Uses). Their data
+   may only be served to our own app - needs app authentication
+   (e.g. App Attest or a per-install token), which the backend does not
+   have (see known gaps).
+2. **History.** `/v1/rates/{id}/history` would publish an archive of
+   their rates; Prohibited Uses bars archiving/caching "within another
+   web site" and redistribution "in any manner whatsoever". Their
+   snapshots must not be exposed through any history endpoint.
+3. **The keyless endpoint is not for production.** FAQ: public-plan
+   rate limits "are enforced over all users so we do not recommend
+   using the public plan for production use". Use a registered (free)
+   key. Free plans: no SLA, "fair use". Exact free quota not published
+   in the bundles (loaded at runtime); 4 requests/day is far inside any
+   plan found.
+4. **Broad "except as permitted in writing" clauses** in Prohibited Uses
+   (e.g. embedding data "into any ... application software") sit
+   awkwardly next to the T&C grant. Ask support@fxratesapi.com to
+   confirm this exact use in writing before launch.
+
+Payload (live, keyless, `GET https://api.fxratesapi.com/latest?base=USD`):
+`{success, terms, privacy, timestamp, date, base:"USD", rates:{...}}`,
+180 rates including MNT, KZT, CNY, crypto and metals, **10 decimal
+places** (KZT 439.4400667645) versus Frankfurter's 5. Headers:
+`x-ratelimit-limit: 61`. One request = the whole USD table, so it fits
+the pivot design and the 4-a-day ceiling unchanged. Note its data is
+intraday market-derived, Frankfurter's central-bank reference: the two
+will differ slightly (KZT 439.44 vs 441.22 the same hour), which is
+expected, not a bug.
+
+Housekeeping signal: its docs "Request Pricing" page is an unedited
+template from a PDF-conversion product ("create more PDFs"). Low effort
+on docs; weigh accordingly.
 
 ### Why logos are hosted copies with recorded provenance
 
@@ -555,7 +621,8 @@ read; nothing above was assumed.
 
 - [x] Owner's **conversion policy** recorded as a binding requirement
       (section "Conversion policy") with three interpretations flagged
-      for confirmation.
+      for confirmation. **USD pivot confirmed by the owner the same
+      evening**; two remain open.
 - [x] Frankfurter reworked from 161 MNT-per-unit quotes to a **USD
       table on `GET /v1/fx`** (160 currencies, one request).
       `/v1/rates` is back to the 15 Mongolian sources.
@@ -573,12 +640,16 @@ read; nothing above was assumed.
       deployment needs Postgres (free tiers have no persistent disk)
       and a decision on the Playwright worker split.
 - [ ] **A second international source is wanted** (ExchangeRate-API and
-      Viv Data rejected). Must allow republishing through an API.
-      `fawazahmed0/exchange-api` (CC0) is a candidate pending a
+      Viv Data rejected). **fxratesapi.com is usable with conditions**
+      (§5): its data may be served only to our own app, so it needs app
+      authentication on `/v1/fx` first, no public history of its
+      snapshots, a registered key, and ideally written confirmation.
+      `fawazahmed0/exchange-api` (CC0) remains a candidate pending a
       provenance check.
 - [ ] **The conversion policy is not implemented anywhere yet.** The
       backend serves the inputs; the iOS app must implement the tiers.
-      Three interpretations await the owner's confirmation.
+      Two interpretations await the owner's confirmation (which bank
+      in tier 1; whether "4 a day" also covers the banks).
 - [ ] **Frankfurter licence not audited per provider** (§5).
 - [ ] **Bank sites were spot-checked, not all crawled from the sandbox.**
       Khan Bank blocks datacenter IPs and NIB's certificate chain does

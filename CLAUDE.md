@@ -112,7 +112,9 @@ Read `ARCHITECTURE.md` first — it carries the why behind all of this.
 - **Conversion policy is the owner's binding requirement** - read
   ARCHITECTURE.md "Conversion policy" before touching rates, `/v1/fx`
   or the mobile brief. In one breath: foreign↔foreign uses the
-  international table only (never MNT); with MNT it is the chosen
+  international table only (never MNT), always pivoting **X → USD → Y**
+  - the server downloads only USD-based rates, never per pair (owner
+  confirmed; an all-pairs table is infeasible); with MNT it is the chosen
   bank → Bank of Mongolia → Bank of Mongolia's USD rate plus the
   international USD leg; always say which tier was used. The app
   implements it; the backend only serves the inputs.
@@ -131,6 +133,11 @@ Read `ARCHITECTURE.md` first — it carries the why behind all of this.
   forbid redistribution through an API; Viv Data resells the same
   data). Do not re-add them; any replacement source must allow
   republishing through an API.
+- **fxratesapi.com is allowed only with conditions** (ARCHITECTURE.md
+  §5): its data may be shown only to our own app's end users, so
+  `/v1/fx` needs app authentication before it is added, its snapshots
+  must never appear in a public history endpoint, and it needs a
+  registered key. Do not wire it to an open endpoint.
 - **Logos are hosted copies with provenance.** Refresh with
   `python -m scripts.fetch_logos`; never hot-link a bank. Naiman
   Sharga intentionally has none (`tests/test_logos.py::NO_LOGO`).
