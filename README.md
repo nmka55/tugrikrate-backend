@@ -271,6 +271,16 @@ python -m scripts.probe_units             # all sources
 python -m scripts.probe_units khanbank    # one source
 ```
 
+## Documentation
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) — why the service exists, how it
+  is built, the evidence behind each decision, and what is done so far.
+- [CLAUDE.md](CLAUDE.md) — working rules and gotchas for anyone (human
+  or agent) changing this repo.
+- [docs/mobile-integration-prompt.md](docs/mobile-integration-prompt.md)
+  — a self-contained brief for building the iOS client against the v1
+  contract. Keep it in sync when the contract changes.
+
 ## License
 
 MIT — see [LICENSE.md](LICENSE.md). Original work © Battseren Badral.

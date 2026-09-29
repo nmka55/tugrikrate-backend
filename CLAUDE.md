@@ -2,6 +2,25 @@
 
 Guidance for Claude Code (or any agent) working in this repo.
 
+## Working rules — follow these on every task
+
+1. **Never assume. Verify.** Every claim must trace to a checked fact:
+   read the file, fetch the payload, run the command. If something
+   cannot be confirmed, **ask** rather than picking a plausible answer.
+   Mark unconfirmable facts explicitly (that is what `verified: false`
+   is for) instead of guessing. This rule is why four live
+   data-correctness bugs were found here rather than shipped — see
+   ARCHITECTURE.md §5.
+2. **Update ARCHITECTURE.md in the same change as the code.** A change
+   is not finished until the doc reflects it. Record the *rationale and
+   evidence*, not just the structure.
+3. **Log every decision: what, why, how.** The code shows what; it
+   never shows why, and why is what is expensive to reconstruct.
+4. **Keep the memory current** (`~/.claude/projects/.../memory/`) on
+   every prompt and every code change, not batched at the end.
+5. **Run the full check sequence before committing** (isort, black,
+   ruff, pytest). CI enforces all four.
+
 ## What this is
 
 The rates backend for TugrikRate, an iOS MNT currency converter. It
@@ -52,7 +71,11 @@ correctness bug, not a style question.
   ok/stale/failing rules, shared by both so they cannot drift.
 - `app/db/snapshots.py` — insert-on-change, bump-on-no-change.
 - `app/api/routers/v1.py` — the public contract. Treat it as frozen;
-  `tests/test_v1_contract.py` asserts the wire format key by key.
+  `tests/test_v1_contract.py` asserts the wire format key by key. Any
+  change here must also update `docs/mobile-integration-prompt.md`,
+  which is what the iOS side is built against.
+
+Read `ARCHITECTURE.md` first — it carries the why behind all of this.
 
 ## Gotchas
 
