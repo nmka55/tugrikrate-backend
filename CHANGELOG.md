@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+### Deployment
+
+- Live at `https://tugrikrate-backend-service.onrender.com`: Render
+  Web Service (free, Singapore) + Neon Postgres (free, AWS Singapore),
+  auto-deploying from `main` after CI passes. First live crawl: all 10
+  HTTP sources returned rates. See ARCHITECTURE.md §8.
+- `render.yaml` rewritten as a record of the live service:
+  `runtime: docker` (was the old `env:` field), `autoDeployTrigger:
+  checksPass` (replaces deprecated `autoDeploy`), service name, and
+  `DATABASE_URL` / `PUBLIC_BASE_URL` prompts.
+
 ### Added
 
 - **Frankfurter** as a 16th source (`type: "international_aggregator"`)

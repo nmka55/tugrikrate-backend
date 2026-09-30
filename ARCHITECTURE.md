@@ -499,11 +499,10 @@ on docs; weigh accordingly.
    variable `FXRATESAPI_KEY`. The backend sends it only as
    `Authorization: Bearer`, never in a URL, so it cannot leak into
    request logs. Set it on the production host too.
-2. *Owner, before production:* set `APP_API_KEYS` (a long random
-   string) on the server and build the same value into the iOS app.
-   Until then the server runs in **development mode** and serves
-   fxratesapi to any caller (below); a production deploy from
-   `render.yaml` refuses to start without it.
+2. *Owner, done on the server (2026-09-30):* `APP_API_KEYS` and
+   `REQUIRE_APP_KEY=true` are set on the production service, which
+   runs in enforced mode (verified: no key → fxratesapi withheld).
+   *Still to do:* build the same value into the iOS app.
 3. *Owner, recommended before launch:* email support@fxratesapi.com
    describing the use - rates fetched 4×/day by our backend, cached,
    shown only inside our iOS app for personal reference, no
@@ -723,15 +722,36 @@ read; nothing above was assumed.
       keys fails with a clear error.
 - [x] 370 tests; isort/black/ruff clean.
 
+**2026-09-30 - production deployment (§8).**
+
+- [x] Live on Render (free, Singapore) at
+      `https://tugrikrate-backend-service.onrender.com`, database on Neon
+      (free, AWS Singapore). Auto-deploys from `main` after CI passes.
+- [x] Verified live: health 200; Neon tables created, 17 sources
+      registered; `APP_API_KEYS` set with `REQUIRE_APP_KEY=true`
+      (production mode, no development-mode warning); `/v1/fx` without
+      key → Frankfurter only, with key → both, `private`; fxRatesAPI
+      history 404; logos served over HTTPS; self-ping healthy.
+- [x] **First live crawl (10:16 UTC): all 10 HTTP sources returned
+      rates, 389 quotes** - including Khan Bank, which blocks the
+      development sandbox's datacenter IP but not Render's. Naiman
+      Sharga reported `stale`, correctly (its own publishing gap).
+- [x] Docs, `render.yaml` and the mobile brief updated to the deployed
+      reality.
+
 **Not done / known gaps**
 
 - [ ] **The iOS app is not connected yet.** No client exists.
-- [ ] **No production deployment.** Local SQLite only. A real
-      deployment needs Postgres (free tiers have no persistent disk)
-      and a decision on the Playwright worker split.
-- [ ] **`APP_API_KEYS` not set yet**: the server runs in development
-      mode, serving fxRatesAPI to any caller. Must be set (server and
-      app) before production; the Render blueprint enforces it.
+- [ ] **Browser banks and foreign sources not yet seen live.** The 5
+      Playwright banks and both FX sources first run on Render at 00:00
+      Ulaanbaatar (16:00 UTC) on 2026-09-30 - the first time headless
+      Chromium runs in the free instance's 512 MB, where upstream hit
+      OOM kills. If it fails: `CRAWL_GROUP=fast` (drop those 5) or a
+      2 GB instance (§8).
+- [ ] **The iOS app must ship the `APP_API_KEYS` value** as its
+      `X-App-Key`; production withholds fxRatesAPI without it.
+- [ ] **Neon free-plan usage is estimated, not measured** (100 CU-hours
+      and 0.5 GB a month). Check the Neon dashboard after a week.
 - [ ] **fxRatesAPI written confirmation** of the use, recommended
       before launch (§5, condition 4).
 - [ ] **App authentication is a shared secret, not App Attest** (§5).
@@ -739,10 +759,10 @@ read; nothing above was assumed.
       app's job (mobile brief, rule 11). Backend-side, one question is
       open: whether "4 a day" also covers the banks.
 - [ ] **Frankfurter licence not audited per provider** (§5).
-- [ ] **Bank sites were spot-checked, not all crawled from the sandbox.**
-      Khan Bank blocks datacenter IPs and NIB's certificate chain does
-      not verify here; their *crawlers* are untested in this sandbox.
-      Logos for them came from the App Store.
+- [ ] **NIB's crawler is unverified end to end.** Its certificate chain
+      did not verify from the development sandbox; it is one of the
+      browser banks first run on Render at 16:00 UTC. (Khan Bank, the
+      other sandbox failure, is confirmed working from Render.)
 - [ ] **CKBank tiered rates are collapsed.** It publishes two USD rows
       (`5000 хүртэл` / `5000-с дээш`); the contract has no tier
       dimension so the first wins. Adding tiers is a v2 contract change.
@@ -775,3 +795,57 @@ isort app tests scripts main.py --check-only && black app tests scripts main.py 
 ruff check app tests scripts main.py
 pytest
 ```
+
+## 8. Production deployment
+
+**Where.** One Render **Web Service**, `tugrikrate-backend-service`
+(`srv-daudq6ugekts73e2ke90`), free plan, region Singapore, Docker
+runtime, at `https://tugrikrate-backend-service.onrender.com`. Database:
+Neon free Postgres, project `icy-shape-78149675`, branch `production`,
+AWS Singapore. Chosen 2026-09-30 after comparing free tiers (Render,
+Oracle Always Free, Koyeb, Fly.io, Railway, Cloud Run): Render needs no
+server administration and was already scripted; Oracle has more RAM
+but must be run by hand; the others either sleep, have no free plan, or
+cannot host an in-process scheduler.
+
+**How a change ships.** Push to `main` → GitHub Actions CI (isort,
+black, ruff, pytest, Docker build) → Render deploys **only after CI
+passes** (`autoDeployTrigger: checksPass`). A deploy restarts the
+process, and with it the in-process scheduler.
+
+**The service was created by hand, not from the Blueprint.** A Blueprint
+attempt made a second service with no database; running both would
+have doubled every crawl (see "In-process state" in CLAUDE.md), so it
+was deleted. `render.yaml` now mirrors the live service's settings so
+it stays an accurate record, but Render does not read it for the
+existing service - settings are changed in the dashboard (or the Render
+API), and `render.yaml` must be kept in step by hand.
+
+**Environment variables on the service** (secrets set in the dashboard,
+never in the repo): `DATABASE_URL` (Neon *direct* string - not the
+`-pooler` host, which is unneeded for one process and risky with
+psycopg's prepared statements), `APP_API_KEYS`, `REQUIRE_APP_KEY=true`,
+`FXRATESAPI_KEY`, `ADMIN_API_KEY`, `PUBLIC_BASE_URL` and
+`SELF_PING_URL` (both must include `https://` - without it the first
+deploy produced logo URLs starting with `-` and a failing self-ping),
+and the 512 MB tuning `MAX_WORKERS=4`, `PLAYWRIGHT_MAX_WORKERS=1`,
+`CRAWL_PLAYWRIGHT_MULTIPLIER=8`, `TRUST_PROXY_HEADERS=true`.
+
+**Free-plan limits that shape it.**
+- The instance sleeps after 15 minutes without inbound traffic, which
+  would stop the scheduler; `SELF_PING_URL` keeps it awake. One
+  always-on service uses ~744 of the 750 free hours a month, so there
+  is room for exactly one such service.
+- 512 MB RAM / 0.1 CPU: see the first known gap in §6. Fallbacks, in
+  order: `CRAWL_GROUP=fast`; a 2 GB instance ($25/month on Render's
+  Standard plan - its $7 Starter plan is still 512 MB).
+- Neon free: 0.5 GB storage, 100 CU-hours a month, compute suspends
+  after 5 minutes idle and each crawl wakes it.
+
+**Checking it.** `GET /api/health` (does not touch the database);
+`GET /v1/rates` (reads the database: 200 means connected); with the
+admin key, `POST /api/admin/crawl/<source>` crawls one source now.
+Render's API (`https://api.render.com/v1`, `Authorization: Bearer`)
+gives deploys, logs and env vars; from a sandbox that blocks port 5432,
+Neon is reachable through `POST https://<host>/sql` with the
+`Neon-Connection-String` header.

@@ -20,16 +20,22 @@ a stable contract. The app must **only** call
 this service — never a bank directly.
 
 - Source: https://github.com/nmka55/tugrikrate-backend
-- Running locally right now at `http://192.168.0.143:8000`
-  (LAN address, for a physical device)
-- From the iOS **Simulator**, use `http://127.0.0.1:8000` instead —
-  the simulator shares the Mac's network stack.
+- **Production (use this by default):**
+  `https://tugrikrate-backend-service.onrender.com`
 - Health check: `GET /api/health` → `{"status":"healthy","version":"2.0.0"}`
-- Interactive docs: `http://192.168.0.143:8000/` (Swagger UI)
+- Interactive docs: `https://tugrikrate-backend-service.onrender.com/`
+  (Swagger UI); OpenAPI at `/openapi.json`
+- Production requires the app key on `/v1/fx` (see rule 11); without
+  it `fxratesapi` is omitted.
+- It runs on a free plan: after a deploy or a long idle period the
+  **first request can take up to about a minute**. Use a request
+  timeout of at least 60 s and show the cached data meanwhile.
 
-The LAN IP is DHCP-assigned and can change. If requests fail, re-check
-it with `ipconfig getifaddr en0` on the Mac and confirm both devices
-are on the same Wi-Fi.
+Local development is optional: a backend on your Mac is reachable at
+`http://127.0.0.1:8000` from the Simulator, or at the Mac's LAN IP
+(`ipconfig getifaddr en0`, port 8000) from a physical device on the
+same Wi-Fi. That address is plain HTTP and needs the Debug-only ATS
+exception below.
 
 ## The endpoint
 
@@ -49,7 +55,7 @@ response is 15 sources, 43 currencies, ~587 quotes):
       "id": "khanbank",
       "name": "Khan Bank",
       "name_mn": "Хаан Банк",
-      "logo_url": "http://192.168.0.143:8000/static/logos/khanbank.jpg?v=99cc0762a4dc",
+      "logo_url": "https://tugrikrate-backend-service.onrender.com/static/logos/khanbank.jpg?v=99cc0762a4dc",
       "type": "commercial_bank",
       "status": "ok",
       "fetched_at": "2026-09-29T03:55:39Z",
@@ -66,7 +72,7 @@ response is 15 sources, 43 currencies, ~587 quotes):
       "id": "mongolbank",
       "name": "Bank of Mongolia",
       "name_mn": "Монгол Банк",
-      "logo_url": "http://192.168.0.143:8000/static/logos/mongolbank.png?v=ada1dcb2791e",
+      "logo_url": "https://tugrikrate-backend-service.onrender.com/static/logos/mongolbank.png?v=ada1dcb2791e",
       "type": "central_bank",
       "status": "ok",
       "fetched_at": "2026-09-29T03:55:45Z",
@@ -80,7 +86,7 @@ response is 15 sources, 43 currencies, ~587 quotes):
       "id": "sendmn",
       "name": "SendMN",
       "name_mn": "Сэнд Эм Эн ББСБ",
-      "logo_url": "http://192.168.0.143:8000/static/logos/sendmn.jpg?v=135034dbbb23",
+      "logo_url": "https://tugrikrate-backend-service.onrender.com/static/logos/sendmn.jpg?v=135034dbbb23",
       "type": "remittance",
       "status": "ok",
       "fetched_at": "2026-09-29T03:55:42Z",
@@ -341,8 +347,9 @@ not ship an ATS exception.
 ## What I'd like built
 
 1. A `RatesAPI` client: base URL configurable per build
-   configuration (Debug → the local address, Release → a placeholder
-   for the future production URL), `async/await`, typed errors.
+   configuration (Release and, by default, Debug →
+   `https://tugrikrate-backend-service.onrender.com`; an optional Debug
+   override for a local backend), `async/await`, typed errors.
 2. `Codable` models matching the contract exactly — `rate` and
    `unit_basis` as `String` in the DTO, exposed as `Decimal` on the
    domain model. Non-exhaustive enums for `channel`, `side`, `status`

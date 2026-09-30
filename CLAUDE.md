@@ -159,6 +159,14 @@ Read `ARCHITECTURE.md` first — it carries the why behind all of this.
   `tests/test_openapi.py` until `python -m scripts.export_openapi` is
   re-run and the diff reviewed. Keep `docs/mobile-integration-prompt.md`
   in step.
+- **Production is a hand-made Render Web Service** (Render free,
+  Singapore, `https://tugrikrate-backend-service.onrender.com`, id
+  `srv-daudq6ugekts73e2ke90`) with Neon Postgres; pushes to `main`
+  deploy after CI passes. `render.yaml` is a *record* of it, not what
+  Render reads - change settings on Render, then mirror them there.
+  Never create a second service from the same repo (two schedulers
+  double every crawl). Every deploy restarts the scheduler. See
+  ARCHITECTURE.md §8.
 - **Line length is 79** (`pyproject.toml`), not black's default 88.
 - **`target-version` is pinned to `py313`** even though the Dockerfile
   runs 3.14. Deliberate, inherited from upstream: Black targeting

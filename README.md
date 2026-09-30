@@ -213,6 +213,35 @@ when unset) and don't run the worker.
 On Render, a worker is a paid process type; `render.yaml` ships the
 single-process configuration with the worker block commented out.
 
+### Production (Render + Neon)
+
+Live at **https://tugrikrate-backend-service.onrender.com** (Swagger UI
+at `/`). One Render Web Service on the free plan in Singapore, with the
+database on Neon's free Postgres (AWS Singapore). Every push to `main`
+deploys automatically once CI passes. Full record, limits and
+rationale: ARCHITECTURE.md §8.
+
+To recreate it from scratch:
+
+1. **Neon** - create a project in AWS Singapore (Postgres only), open
+   *Connect*, turn **connection pooling off**, and copy the direct
+   connection string. No schema step: the app creates its tables on
+   start.
+2. **Render** - *New > Web Service* from this repo, branch `main`,
+   runtime **Docker**, region **Singapore**, plan **Free**, health check
+   `/api/health`, auto-deploy **after CI checks pass**. (Or *New >
+   Blueprint*, which reads `render.yaml` - but never run both: two
+   copies of the in-process scheduler double every crawl.)
+3. **Environment** - `DATABASE_URL`, `APP_API_KEYS`,
+   `REQUIRE_APP_KEY=true`, `FXRATESAPI_KEY`, `ADMIN_API_KEY`,
+   `MAX_WORKERS=4`, `PLAYWRIGHT_MAX_WORKERS=1`,
+   `CRAWL_PLAYWRIGHT_MULTIPLIER=8`, `TRUST_PROXY_HEADERS=true`; then,
+   once the URL exists, `PUBLIC_BASE_URL=https://<service>.onrender.com`
+   and `SELF_PING_URL=https://<service>.onrender.com/api/health` (both
+   **with** `https://`).
+4. **Check** - `/api/health`, then `/v1/rates` (200 means the database
+   is connected); sources fill in at the next scheduled crawl.
+
 ### Other deployment notes
 
 A 15-minute cadence is below what an external HTTP trigger (GitHub

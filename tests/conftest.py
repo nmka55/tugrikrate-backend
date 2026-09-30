@@ -17,12 +17,16 @@ from app.sources.registry import BY_ID
 
 @pytest.fixture(autouse=True)
 def no_secrets_from_the_environment(monkeypatch):
-    """Tests never see a real FXRATESAPI_KEY or APP_API_KEYS, so the
+    """Tests never see real secrets (FXRATESAPI_KEY, APP_API_KEYS,
+    ADMIN_API_KEY) or a deployment URL, so the
     suite behaves the same on a laptop with keys set as in CI without
     them. A test that needs a key sets one explicitly."""
     monkeypatch.setattr(config, "FXRATESAPI_KEY", "")
     monkeypatch.setattr(config, "APP_API_KEYS", [])
     monkeypatch.setattr(config, "REQUIRE_APP_KEY", False)
+    monkeypatch.setattr(config, "ADMIN_API_KEY", "")
+    # A deployment URL in the environment would rewrite every logo_url.
+    monkeypatch.setattr(config, "PUBLIC_BASE_URL", "")
 
 
 @pytest.fixture(scope="function")
