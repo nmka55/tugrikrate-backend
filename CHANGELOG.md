@@ -6,6 +6,11 @@
 
 ### Deployment
 
+- Fixed: intermittent 500s in production after idle periods. Neon's
+  free Postgres suspends and closes pooled connections; the engine now
+  uses `pool_pre_ping=True` to replace a dead connection instead of
+  failing the request.
+
 - Fixed: CI's Docker Test job failed on every push to `main` since the
   PR merge, because `.dockerignore` kept `docs/openapi.json` out of the
   image that runs the tests. That also held back Render auto-deploys.

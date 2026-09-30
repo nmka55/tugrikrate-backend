@@ -7,7 +7,16 @@ from app.models.snapshot import Base
 
 _is_sqlite = config.DATABASE_URL.startswith("sqlite")
 _connect_args = {"check_same_thread": False} if _is_sqlite else {}
-engine = create_engine(config.DATABASE_URL, connect_args=_connect_args)
+# pool_pre_ping: Neon's free Postgres suspends its compute after ~5
+# minutes idle and closes every open connection ("terminating
+# connection due to administrator command"). Without a liveness check
+# the pool hands that dead connection to the next request, which fails
+# with a 500 - seen in production on /v1/fx at 15:59 and 16:17 UTC on
+# 2026-09-30. Pinging on checkout costs one round-trip and transparently
+# replaces a dead connection. See ARCHITECTURE.md §8.
+engine = create_engine(
+    config.DATABASE_URL, connect_args=_connect_args, pool_pre_ping=True
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 

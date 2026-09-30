@@ -748,6 +748,32 @@ read; nothing above was assumed.
       verified with Docker's own context rules and a full test run on
       exactly that context.
 
+**2026-09-30, 16:00 UTC - first browser and FX crawls on Render.**
+
+- [x] **Chromium fits in 512 MB so far**: 4 of the 5 Playwright banks
+      returned rates (Bogd 30, CK 38, NIB 28, TransBank 32 quotes);
+      no OOM, no restart, no failed-instance event. NIB's certificate
+      problem was the sandbox's, not the bank's.
+- [x] **Both FX sources live**: Frankfurter 160 and fxRatesAPI 154
+      currencies; no "key not honoured" warning; `/v1/fx` without the
+      app key still returns Frankfurter only.
+- [x] 12 ok / 2 stale / 1 failing, 517 quotes. Stale are Naiman Sharga
+      (last published 5 days ago) and CK (2 days) - both the sources'
+      own dates.
+- [ ] **TDBM returns 0 at the 00:00 Ulaanbaatar run**: at that minute
+      its page lists the currencies with no rate cells - the new day
+      is not published yet. The 5 browser banks' only overnight slot
+      is 00:00, so TDBM fails there nightly and keeps its last good
+      snapshot; its first successful live run should be 08:00
+      Ulaanbaatar. Not yet seen succeed on Render.
+- [x] **Bug found: intermittent 500s from idle database connections.**
+      Neon suspends compute after ~5 minutes idle and closes pooled
+      connections (`AdminShutdown: terminating connection due to
+      administrator command`); the next request got the dead
+      connection. Fixed with `pool_pre_ping=True`
+      (`tests/test_database.py` simulates a killed connection; the
+      same simulation without pre-ping fails).
+
 **Not done / known gaps**
 
 - [ ] **The iOS app is not connected yet.** No client exists.
@@ -849,7 +875,10 @@ and the 512 MB tuning `MAX_WORKERS=4`, `PLAYWRIGHT_MAX_WORKERS=1`,
   order: `CRAWL_GROUP=fast`; a 2 GB instance ($25/month on Render's
   Standard plan - its $7 Starter plan is still 512 MB).
 - Neon free: 0.5 GB storage, 100 CU-hours a month, compute suspends
-  after 5 minutes idle and each crawl wakes it.
+  after 5 minutes idle and each crawl wakes it. Suspension closes
+  every pooled connection, which is why the engine uses
+  `pool_pre_ping=True` (without it, the first request after an idle
+  spell returned a 500).
 
 **Checking it.** `GET /api/health` (does not touch the database);
 `GET /v1/rates` (reads the database: 200 means connected); with the

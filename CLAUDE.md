@@ -167,6 +167,9 @@ Read `ARCHITECTURE.md` first — it carries the why behind all of this.
   Never create a second service from the same repo (two schedulers
   double every crawl). Every deploy restarts the scheduler. See
   ARCHITECTURE.md §8.
+- **Keep `pool_pre_ping=True` on the engine** (`app/db/database.py`).
+  Neon suspends idle compute and kills pooled connections; removing it
+  brings back 500s on the first request after an idle spell.
 - **The Docker image runs the whole test suite** (Dockerfile `test`
   stage, CI's Docker Test job, `main` only - so a PR can pass while
   `main` fails). Any file a test reads must survive `.dockerignore`:
