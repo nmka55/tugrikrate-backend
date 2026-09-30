@@ -167,6 +167,11 @@ Read `ARCHITECTURE.md` first — it carries the why behind all of this.
   Never create a second service from the same repo (two schedulers
   double every crawl). Every deploy restarts the scheduler. See
   ARCHITECTURE.md §8.
+- **The Docker image runs the whole test suite** (Dockerfile `test`
+  stage, CI's Docker Test job, `main` only - so a PR can pass while
+  `main` fails). Any file a test reads must survive `.dockerignore`:
+  `docs/` is excluded except `docs/openapi.json`. A red `main` also
+  blocks Render deploys (`checksPass`).
 - **Line length is 79** (`pyproject.toml`), not black's default 88.
 - **`target-version` is pinned to `py313`** even though the Dockerfile
   runs 3.14. Deliberate, inherited from upstream: Black targeting

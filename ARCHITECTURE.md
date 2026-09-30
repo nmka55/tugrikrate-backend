@@ -738,6 +738,15 @@ read; nothing above was assumed.
       Sharga reported `stale`, correctly (its own publishing gap).
 - [x] Docs, `render.yaml` and the mobile brief updated to the deployed
       reality.
+- [x] **CI fixed.** The Docker Test job (runs on `main` only, so the PR
+      passed) had failed on every push since the merge:
+      `.dockerignore` excluded `docs/`, so `tests/test_openapi.py`
+      could not read `docs/openapi.json` inside the image. Because
+      Render deploys only after CI passes, those pushes were never
+      auto-deployed; the live service ran the manually deployed
+      `9f24376`. Fixed by re-including only `docs/openapi.json`;
+      verified with Docker's own context rules and a full test run on
+      exactly that context.
 
 **Not done / known gaps**
 

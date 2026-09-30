@@ -6,6 +6,10 @@
 
 ### Deployment
 
+- Fixed: CI's Docker Test job failed on every push to `main` since the
+  PR merge, because `.dockerignore` kept `docs/openapi.json` out of the
+  image that runs the tests. That also held back Render auto-deploys.
+
 - Live at `https://tugrikrate-backend-service.onrender.com`: Render
   Web Service (free, Singapore) + Neon Postgres (free, AWS Singapore),
   auto-deploying from `main` after CI passes. First live crawl: all 10

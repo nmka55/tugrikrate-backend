@@ -54,7 +54,10 @@ exchange_rates.db
 # Documentation
 *.md
 !README.md
-docs/
+docs/*
+# The committed OpenAPI contract is read by tests/test_openapi.py, which
+# the Dockerfile's test stage runs - without it CI's Docker job fails.
+!docs/openapi.json
 
 # CI/CD
 .github/
