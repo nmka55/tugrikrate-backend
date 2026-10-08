@@ -256,6 +256,57 @@ class TestMongolBank:
         crawler.crawl()
         assert crawler.published_date == datetime.date(2026, 9, 28)
 
+    @patch("app.crawlers.mongolbank.BaseCrawler.post")
+    def test_asks_for_a_date_window_not_the_whole_history(self, mock_post):
+        """The old endpoint returned every day since 2001 (~4.9 MB) on
+        every crawl; the daily endpoint takes the window as query
+        parameters, exactly as the bank's own page sends it."""
+        mock_post.return_value = mock_response({"data": []})
+        MongolBank("2026-10-08").crawl()
+
+        url = mock_post.call_args.args[0]
+        params = mock_post.call_args.kwargs["params"]
+        assert url.endswith("/en/currency-rates/data")
+        assert params == {"startDate": "2026-10-01", "endDate": "2026-10-08"}
+
+    @patch("app.crawlers.mongolbank.BaseCrawler.post")
+    def test_picks_the_latest_date_whatever_the_order(self, mock_post):
+        """The daily endpoint sorts oldest first; the latest published
+        date must win by date, not by position."""
+        mock_post.return_value = mock_response(
+            {
+                "data": [
+                    {"RATE_DATE": "2026-10-06", "USD": "3,595.10"},
+                    {"RATE_DATE": "2026-10-07", "USD": "3,595.60"},
+                ]
+            }
+        )
+        crawler = MongolBank("2026-10-08")
+        rates = crawler.crawl()
+        assert rates["usd"].cash.buy == Decimal("3595.60")
+        assert crawler.published_date == datetime.date(2026, 10, 7)
+
+    @patch("app.crawlers.mongolbank.BaseCrawler.post")
+    def test_never_takes_a_future_dated_row(self, mock_post):
+        mock_post.return_value = mock_response(
+            {
+                "data": [
+                    {"RATE_DATE": "2026-10-08", "USD": "3,596.00"},
+                    {"RATE_DATE": "2026-10-09", "USD": "3,999.00"},
+                ]
+            }
+        )
+        rates = MongolBank("2026-10-08").crawl()
+        assert rates["usd"].cash.buy == Decimal("3596.00")
+
+    @patch("app.crawlers.mongolbank.BaseCrawler.post")
+    def test_no_result_message_is_an_empty_crawl(self, mock_post):
+        """`success: false` puts a message string in `data`."""
+        mock_post.return_value = mock_response(
+            {"success": False, "data": "Тохирох үр дүн олдсонгүй."}
+        )
+        assert MongolBank("2026-10-08").crawl() == {}
+
     def test_legacy_xml_branch(self):
         rates = MongolBank(TODAY)._parse("""<?xml version="1.0"?>
             <Root><Ccy>

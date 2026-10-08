@@ -7,9 +7,27 @@ parse cannot affect any other source's result or leave a shared session
 in a failed state. A failure never touches the last good snapshot - it
 increments a failure counter, and the v1 feed keeps serving the old
 rates flagged `stale` or `failing`.
+
+Three more guarantees (2026-10-08), so one bad source can never cost the
+others a crawl or lose a good result:
+
+- **Batch deadline.** A run stops waiting after
+  CRAWL_BATCH_DEADLINE_SECONDS. Every source that finished is already
+  saved (each saves itself the moment it completes). A source still
+  running is reported as overdue and keeps going in the background - it
+  still saves if it succeeds - but it can no longer hold the scheduler's
+  job open (`max_instances=1`), which used to make the *next* slot skip
+  every source in the group.
+- **One crawl per source at a time.** A source whose previous crawl is
+  still running is skipped by the next run rather than started twice
+  (two headless Chromiums do not fit the free instance's 512 MB).
+- **One persistence retry.** A failed database write (e.g. a Neon
+  compute waking from suspend) is retried once on a fresh session, so a
+  good crawl is not thrown away for a transient connection error.
 """
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -26,21 +44,80 @@ def target_date() -> str:
     return datetime.now(ZoneInfo(config.CRAWL_TIMEZONE)).date().isoformat()
 
 
+_in_flight: set[str] = set()
+_in_flight_lock = threading.Lock()
+
+
+def _claim(source_id: str) -> bool:
+    with _in_flight_lock:
+        if source_id in _in_flight:
+            return False
+        _in_flight.add(source_id)
+        return True
+
+
+def _release(source_id: str) -> None:
+    with _in_flight_lock:
+        _in_flight.discard(source_id)
+
+
+def _persist(spec: SourceSpec, write) -> object:
+    """Run `write(db)` on a fresh session, retrying once on a new session
+    if the first attempt fails. Raises if both attempts fail."""
+    last_exc: Exception | None = None
+    for attempt in (1, 2):
+        db = SessionLocal()
+        try:
+            return write(db)
+        except Exception as exc:
+            last_exc = exc
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            if attempt == 1:
+                logger.warning(
+                    f"{spec.id}: database write failed ({exc}); retrying once"
+                )
+        finally:
+            db.close()
+    raise last_exc
+
+
 def crawl_source(spec: SourceSpec, date_str: str | None = None) -> dict:
     """Crawl and persist one source. Never raises."""
-    date_str = date_str or target_date()
-    db = SessionLocal()
+    if not _claim(spec.id):
+        logger.warning(
+            f"{spec.id}: previous crawl still running - skipped this run"
+        )
+        return {
+            "source": spec.id,
+            "ok": False,
+            "skipped": True,
+            "error": "previous crawl still running",
+        }
+    try:
+        return _crawl_and_persist(spec, date_str or target_date())
+    finally:
+        _release(spec.id)
+
+
+def _crawl_and_persist(spec: SourceSpec, date_str: str) -> dict:
     try:
         try:
             result = collect(spec, date_str)
         except Exception as exc:
-            record_failure(db, spec, f"{type(exc).__name__}: {exc}")
+            message = f"{type(exc).__name__}: {exc}"
+            _persist(spec, lambda db: record_failure(db, spec, message))
             return {"source": spec.id, "ok": False, "error": str(exc)}
 
         if not result.quotes:
             # An empty parse is a failure, not a successful crawl of
             # nothing: publishing it would wipe the source's quotes.
-            record_failure(db, spec, "crawl returned 0 quotes")
+            _persist(
+                spec,
+                lambda db: record_failure(db, spec, "crawl returned 0 quotes"),
+            )
             return {
                 "source": spec.id,
                 "ok": False,
@@ -48,7 +125,9 @@ def crawl_source(spec: SourceSpec, date_str: str | None = None) -> dict:
             }
 
         digest = result_hash(spec, result)
-        _, inserted = record_success(db, spec, result, digest)
+        _, inserted = _persist(
+            spec, lambda db: record_success(db, spec, result, digest)
+        )
         return {
             "source": spec.id,
             "ok": True,
@@ -57,11 +136,9 @@ def crawl_source(spec: SourceSpec, date_str: str | None = None) -> dict:
             "warnings": result.warnings,
         }
     except Exception as exc:
-        # Persistence itself failed; log loudly but keep the run alive.
+        # Persistence failed twice; log loudly but keep the run alive.
         logger.error(f"{spec.id}: could not persist crawl - {exc}")
         return {"source": spec.id, "ok": False, "error": str(exc)}
-    finally:
-        db.close()
 
 
 def crawl_sources(
@@ -85,16 +162,29 @@ def crawl_sources(
         )
 
     results = []
-    if workers > 1 and len(specs) > 1:
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = [
-                executor.submit(crawl_source, spec, date_str) for spec in specs
-            ]
-            for future in as_completed(futures):
-                results.append(future.result())
-    else:
-        for spec in specs:
-            results.append(crawl_source(spec, date_str))
+    deadline = config.CRAWL_BATCH_DEADLINE_SECONDS
+    # Always through an executor, even with one worker, so the deadline
+    # applies: a sequential loop would let one hung source block the rest.
+    executor = ThreadPoolExecutor(max_workers=max(1, workers))
+    futures = {
+        executor.submit(crawl_source, spec, date_str): spec for spec in specs
+    }
+    done, overdue = wait(futures, timeout=deadline)
+    for future in done:
+        results.append(future.result())
+    for future in overdue:
+        spec = futures[future]
+        if future.cancel():
+            error = f"not started within the {deadline}s batch deadline"
+        else:
+            error = (
+                f"still running after the {deadline}s batch deadline; "
+                "it saves its result if it finishes"
+            )
+        logger.warning(f"{spec.id}: {error}")
+        results.append({"source": spec.id, "ok": False, "error": error})
+    # Do not wait for overdue crawls; they finish (and save) on their own.
+    executor.shutdown(wait=False, cancel_futures=True)
 
     succeeded = [r for r in results if r["ok"]]
     failed = [r for r in results if not r["ok"]]

@@ -276,6 +276,7 @@ Everything has a working default; see `app/config.py` for the full list.
 | `PUBLISHED_STALE_HOURS` | `36` | Publication age before `stale` |
 | `SNAPSHOT_RETENTION_DAYS` | `0` | `0` keeps everything |
 | `MAX_WORKERS` / `PLAYWRIGHT_MAX_WORKERS` | `8` / `3` | Crawl concurrency |
+| `CRAWL_BATCH_DEADLINE_SECONDS` | `600` | How long a run waits for its sources; overdue ones keep running and still save |
 | `SELF_PING_URL` | (empty) | Keeps a sleeping free-tier instance awake |
 | `CORS_ORIGINS`, `RATE_LIMIT_*` | — | Public API safeguards |
 | `INTL_CRAWLS_PER_DAY` / `INTL_DAILY_CALL_LIMIT` | `4` / `4` | International fetches per day, and the hard per-source ceiling |

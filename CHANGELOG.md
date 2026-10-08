@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+### Crawlers (2026-10-08)
+
+- Fixed: the Bank of Mongolia crawler downloaded the full rate history
+  since 2001 (~4.9 MB, 8,512 rows) on every crawl, the likeliest cause
+  of its intermittent 502s and timeouts. It now asks
+  `/en/currency-rates/data` for a 7-day window (~8 KB) and picks the
+  latest published date by value. Rows verified identical to the full
+  history.
+- Added: crawl runs stop waiting after `CRAWL_BATCH_DEADLINE_SECONDS`
+  (600), so a hung source can no longer make the next slot skip every
+  source; a source still running is skipped instead of started twice;
+  a failed database write is retried once on a fresh session.
+  `tests/test_collector.py`.
+- Known: Naiman Sharga has published nothing to its Firestore
+  `currency_rates` collection since 2026-09-26, so it stays `failing`.
+  Its `exchange_rates` collection is a different, unconfirmed dataset
+  and is not used. See ARCHITECTURE.md §6.
+
 ### Deployment
 
 - Fixed: intermittent 500s in production after idle periods. Neon's

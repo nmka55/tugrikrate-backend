@@ -195,6 +195,14 @@ class Config:
 
     # Parallel execution
     ENABLE_PARALLEL = _env_bool("ENABLE_PARALLEL", True)
+    # How long one scheduled run waits for its sources. Finished sources
+    # are saved as they complete; one still running past this is reported
+    # overdue and left to finish in the background, so it can no longer
+    # keep the job open and make the next slot skip every source. Under
+    # the 15-minute active cadence on purpose.
+    CRAWL_BATCH_DEADLINE_SECONDS = _env_positive_int(
+        "CRAWL_BATCH_DEADLINE_SECONDS", 600
+    )
     MAX_WORKERS = _env_positive_int("MAX_WORKERS", 8)
     PLAYWRIGHT_MAX_WORKERS = _env_positive_int("PLAYWRIGHT_MAX_WORKERS", 3)
 
@@ -220,9 +228,13 @@ class Config:
     STATEBANK_URI = _env(
         "STATEBANK_URI", "https://www.statebank.mn/back/api/fetchrate"
     )
+    # The "Daily foreign exchange rates" page's endpoint, which takes a
+    # startDate/endDate window as query parameters (~8 KB). The old
+    # /en/currency-rate-movement/data ignores any range and returns the
+    # whole history since 2001 (8,512 rows, ~4.9 MB) on every crawl.
     MONGOLBANK_URI = _env(
         "MONGOLBANK_URI",
-        "https://www.mongolbank.mn/en/currency-rate-movement/data",
+        "https://www.mongolbank.mn/en/currency-rates/data",
     )
     CAPITRONBANK_API_URL = _env(
         "CAPITRONBANK_API_URL",

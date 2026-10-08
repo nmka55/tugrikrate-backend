@@ -618,6 +618,30 @@ A 15-minute cadence is below what an external HTTP trigger (GitHub
 Actions cron) holds reliably. `SCHEDULER_ENABLED=false` hands control
 back to `POST /api/admin/crawl` for deployments that prefer it.
 
+### Why a crawl run has a deadline, and one crawl per source
+
+Each source already crawls and saves in isolation (its own session and
+try/except), so one bank failing never stopped the others: production
+logs show runs like `9 ok (1 changed), 1 failed` with Naiman Sharga
+failing and everyone else saved. What isolation did not cover is a
+source that *hangs*. `crawl_sources` waited for every source, and the
+APScheduler job runs with `max_instances=1, coalesce=True`, so one slow
+source held the job open and the next 15-minute slot was skipped for
+every source in the group. The Bank of Mongolia's old 4.9 MB full-history
+response was exactly that risk on a 0.1-CPU instance (a read timeout
+resets on every chunk, so a slow transfer is not bounded by
+`REQUEST_TIMEOUT`).
+
+So (2026-10-08): a run stops waiting after
+`CRAWL_BATCH_DEADLINE_SECONDS` (600). Finished sources are already
+saved; an overdue one is reported, keeps running in the background and
+still saves if it succeeds. A source whose previous crawl is still
+running is skipped by the next run instead of started twice, because two
+headless Chromiums do not fit in 512 MB. A failed database write is
+retried once on a fresh session, so a good crawl is not lost to a Neon
+compute waking from suspend. All three are covered by
+`tests/test_collector.py`.
+
 ### Why there is no backfill
 
 Banks do not serve historical intraday rates. Under snapshot semantics
@@ -809,6 +833,42 @@ read; nothing above was assumed.
 - [ ] **Single-process assumptions.** Rate limiter and admin job lock
       are in-memory; running two replicas of the same `CRAWL_GROUP`
       would double every crawl.
+
+**2026-10-08 - crawler health check.**
+
+Neon showed snapshots on every day from 2026-09-30 to 2026-10-08 (404
+rows; fxRatesAPI at every one of its 4 daily slots), so the scheduler
+had no outage; a row is only written when a source's rates change.
+Every source was crawled live from the sandbox (Khan Bank still blocks
+the sandbox with a bare 406 while Render reaches it).
+
+- [x] **Bank of Mongolia: 4.9 MB per crawl fixed.** It POSTed to
+      `/en/currency-rate-movement/data`, which ignores any date range
+      and returns every day since 2001 (8,512 rows, ~4.9 MB, ~9 s) on
+      every 15-minute crawl; production logged
+      `too many 502 error responses` from it. It now uses
+      `/en/currency-rates/data?startDate=…&endDate=…` - the endpoint
+      behind the bank's own "Daily foreign exchange rates" page, whose
+      `main.min.js` sends the window as axios `params` on a POST.
+      Verified: identical rows key for key to the full history for 37
+      days; ~8 KB in ~1.2 s; 38 quotes live, the same as before. It
+      sorts oldest first, so the latest date is chosen by value, never
+      by position, and a future-dated row is never taken.
+- [x] Crawl-run deadline, one crawl per source, persistence retry
+      (see §5 "Why a crawl run has a deadline").
+- [ ] **Naiman Sharga has published nothing since 2026-09-26.** Its
+      Firestore collection `currency_rates` (one document per day)
+      ends on 2026-09-26; the crawler's 7-day lookback reached it until
+      2026-10-03 and has returned 0 quotes since (267 failures in a row
+      on 2026-10-08). Not a crawler bug. The same project has an
+      `exchange_rates` collection updated daily to 2026-10-08, but it
+      is a different dataset: only CNY, KRW, RUB (and MNT = 1), with
+      different numbers (CNY 536/542 against `currency_rates`'
+      537.5/538.3 for the same 2026-09-26 write). Its meaning is
+      unconfirmed - plausibly transfer rates for those corridors - so
+      it is **not** wired in; that needs the owner's decision and
+      evidence of what the figures are. Until then the source stays
+      `failing` and keeps serving its last good snapshot.
 
 ## 7. Running locally
 
