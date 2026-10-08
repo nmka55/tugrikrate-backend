@@ -522,7 +522,7 @@ def get_fx(
     pivots through USD: `amount / rate_X * rate_Y`, using both rates
     from the **same source** so they come from one snapshot. This
     endpoint only serves the table; conversion is done by the client.
-    Refreshed a few times a day, not every 15 minutes.
+    Refreshed a few times a day, not on the banks' cadence.
 
     Sources whose licence restricts them to our own app (fxratesapi)
     appear only when the request carries a valid `X-App-Key`; without

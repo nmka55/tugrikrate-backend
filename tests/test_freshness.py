@@ -151,9 +151,9 @@ class TestStatus:
     def test_browser_source_gets_a_longer_allowance(self):
         """The same gap means different things for the two cadences.
 
-        A fast source allows 15m x STALE_AFTER_INTERVALS before it is
-        stale; a browser source allows that times the Playwright
-        multiplier. A 90-minute gap sits between the two.
+        A fast source allows 30m x STALE_AFTER_INTERVALS (90 min) before
+        it is stale; a browser source allows that times the Playwright
+        multiplier. A 120-minute gap sits between the two.
         """
         now = at_local(10)
         fast_allowance = interval_minutes(FAST, now) * (
@@ -162,9 +162,9 @@ class TestStatus:
         slow_allowance = interval_minutes(SLOW, now) * (
             config.STALE_AFTER_INTERVALS
         )
-        assert fast_allowance < 90 < slow_allowance
+        assert fast_allowance < 120 < slow_allowance
 
-        checked = now - timedelta(minutes=90)
+        checked = now - timedelta(minutes=120)
         assert compute_status(SLOW, snapshot(checked), None, now) == STATUS_OK
         assert (
             compute_status(FAST, snapshot(checked), None, now) == STATUS_STALE

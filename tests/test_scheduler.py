@@ -41,6 +41,12 @@ class TestCronFields:
         assert fields["minute"] == "0"
         assert fields["hour"] == "0,4,8,12,16,20"
 
+    def test_default_active_cadence_is_twice_an_hour(self):
+        """Owner's request, 2026-10-08: :00 and :30, not every 15 min."""
+        assert config.CRAWL_ACTIVE_INTERVAL_MINUTES == 30
+        job = build_scheduler().get_job("http-active")
+        assert "minute='*/30'" in str(job.trigger)
+
     def test_empty_window_yields_no_job(self):
         assert _cron_fields(15, []) is None
 

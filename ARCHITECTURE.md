@@ -114,7 +114,7 @@ Consequences for the backend:
 **Still awaiting the owner's confirmation:**
 
 - *"4 times a day".* Applied to the international source only. The
-  banks are unchanged (every 15 min during 08:00-20:00 Ulaanbaatar,
+  banks are unchanged (every 30 min during 08:00-20:00 Ulaanbaatar,
   hourly otherwise); their freshness matters to a converter and they
   are not metered. `CRAWL_ACTIVE_INTERVAL_MINUTES` /
   `CRAWL_OFFPEAK_INTERVAL_MINUTES` change that if intended.
@@ -195,9 +195,18 @@ All Asia/Ulaanbaatar, because banks republish on their own working day.
 
 | Group | 08:00–20:00 | Otherwise |
 | --- | --- | --- |
-| 10 JSON sources (`fast`) | every 15 min | hourly |
-| 5 Playwright sources (`slow`) | hourly | every 4 h |
+| 10 JSON sources (`fast`) | every 30 min (was 15 until 2026-10-08) | hourly |
+| 5 Playwright sources (`slow`) | every 2 h | every 4 h |
 | Frankfurter (`daily`, HTTP side) | `INTL_CRAWLS_PER_DAY` = 4: 00:00, 06:00, 12:00, 18:00, one request each | same (4 requests/day) |
+
+**Why 30 minutes (2026-10-08, owner's request).** Banking hours used to
+crawl every 15 minutes. Banks move their rates a few times a day, so
+twice an hour still catches a change within half an hour, halves the
+requests each bank receives, and halves Render's CPU and Neon's wake-ups.
+The browser banks keep their 2-hour daytime cadence: the multiplier is
+4 against 30 minutes (Render had 8 against 15). The stale threshold
+follows automatically (`STALE_AFTER_INTERVALS` × interval = 90 minutes),
+and the batch deadline (600 s) stays inside the slot.
 
 Every trigger carries ±`CRAWL_JITTER_SECONDS` so no bank sees an exact
 interval boundary. `CRAWL_GROUP` (`all`/`fast`/`slow`) lets the
@@ -614,7 +623,7 @@ there is no conversion step anywhere that could reintroduce a float.
 
 ### Why the scheduler is in-process
 
-A 15-minute cadence is below what an external HTTP trigger (GitHub
+A 30-minute cadence is below what an external HTTP trigger (GitHub
 Actions cron) holds reliably. `SCHEDULER_ENABLED=false` hands control
 back to `POST /api/admin/crawl` for deployments that prefer it.
 

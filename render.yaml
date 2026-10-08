@@ -10,7 +10,7 @@
 # in-process scheduler would double every crawl. See ARCHITECTURE.md §8.
 #
 # The scheduler runs inside the web process (app/services/scheduler.py),
-# so no separate worker is needed, which is what makes the 15-minute
+# so no separate worker is needed, which is what makes the 30-minute
 # cadence possible on a free plan with no worker type.
 #
 # Free plan facts that shape the values below:
@@ -54,11 +54,13 @@ services:
         value: "4"
       - key: PLAYWRIGHT_MAX_WORKERS
         value: "1"
-      # Run the five Playwright sources every 2 hours instead of hourly,
-      # so a headless Chromium is in memory half as often. Raise further
-      # if the instance still gets OOM-killed.
+      # Run the five Playwright sources every 2 hours while active
+      # (4 x the 30-minute base interval; it was 8 x 15 minutes before
+      # 2026-10-08), so a headless Chromium is in memory rarely. Raise
+      # if the instance gets OOM-killed. The dashboard value must match:
+      # left at 8 it would mean every 4 hours.
       - key: CRAWL_PLAYWRIGHT_MULTIPLIER
-        value: "8"
+        value: "4"
       # Render's edge proxy is a trustworthy source for X-Forwarded-For,
       # unlike the conservative app-level default of false.
       - key: TRUST_PROXY_HEADERS

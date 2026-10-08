@@ -125,8 +125,8 @@ Swagger UI is at `/`.
 
 | Sources | 08:00–20:00 | Otherwise |
 | --- | --- | --- |
-| 10 JSON-API sources | every 15 min | hourly |
-| 5 rendered-page sources (Playwright) | hourly | every 4 h |
+| 10 JSON-API sources | every 30 min | hourly |
+| 5 rendered-page sources (Playwright) | every 2 h | every 4 h |
 
 Every trigger carries random jitter (`CRAWL_JITTER_SECONDS`, default
 ±90s) so no bank is hit on an exact interval boundary. The browser
@@ -244,7 +244,7 @@ To recreate it from scratch:
 
 ### Other deployment notes
 
-A 15-minute cadence is below what an external HTTP trigger (GitHub
+A 30-minute cadence is below what an external HTTP trigger (GitHub
 Actions cron, for example) can reliably hold — which is why the
 scheduler moved in-process. Set `SCHEDULER_ENABLED=false` and drive
 `POST /api/admin/crawl` yourself if you would rather run collection
@@ -265,7 +265,7 @@ Everything has a working default; see `app/config.py` for the full list.
 | `SCHEDULER_ENABLED` | `true` | Run the in-process scheduler |
 | `CRAWL_TIMEZONE` | `Asia/Ulaanbaatar` | Cadence is local, not UTC |
 | `CRAWL_ACTIVE_START_HOUR` / `_END_HOUR` | `8` / `20` | Fast-cadence window |
-| `CRAWL_ACTIVE_INTERVAL_MINUTES` | `15` | Interval inside that window |
+| `CRAWL_ACTIVE_INTERVAL_MINUTES` | `30` | Interval inside that window |
 | `CRAWL_OFFPEAK_INTERVAL_MINUTES` | `60` | Interval outside it |
 | `CRAWL_JITTER_SECONDS` | `90` | Random spread on every trigger |
 | `CRAWL_GROUP` | `all` | `all`, `fast` or `slow` — which sources this process collects |

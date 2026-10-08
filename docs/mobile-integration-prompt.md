@@ -317,7 +317,7 @@ the bandwidth on a polling app — which matters on cellular.
 second request produces a 304 and that you serve the cached body.
 
 Poll at most every 5 minutes in the foreground; the backend itself only
-refreshes every 15 minutes during Mongolian banking hours (08:00–20:00
+refreshes every 30 minutes during Mongolian banking hours (08:00–20:00
 Asia/Ulaanbaatar) and hourly outside that, so anything faster is wasted
 requests.
 

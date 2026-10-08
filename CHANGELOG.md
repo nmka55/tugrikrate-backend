@@ -6,6 +6,11 @@
 
 ### Crawlers (2026-10-08)
 
+- Changed: banking-hours crawls run twice an hour (`:00`/`:30`, was
+  every 15 minutes); `CRAWL_ACTIVE_INTERVAL_MINUTES` defaults to 30.
+  The browser banks keep every 2 hours: `CRAWL_PLAYWRIGHT_MULTIPLIER`
+  is 4 against the new interval (Render's dashboard value of 8 must be
+  changed to 4, or it means every 4 hours).
 - Fixed: the Bank of Mongolia crawler downloaded the full rate history
   since 2001 (~4.9 MB, 8,512 rows) on every crawl, the likeliest cause
   of its intermittent 502s and timeouts. It now asks

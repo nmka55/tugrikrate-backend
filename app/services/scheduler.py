@@ -5,12 +5,12 @@ timezone handling and no way to vary cadence per source.
 
 Cadence, all in Asia/Ulaanbaatar:
 
-    08:00-20:00   every 15 min   (CRAWL_ACTIVE_INTERVAL_MINUTES)
+    08:00-20:00   every 30 min   (CRAWL_ACTIVE_INTERVAL_MINUTES)
     otherwise     hourly         (CRAWL_OFFPEAK_INTERVAL_MINUTES)
 
 The five Playwright sources cost a headless Chromium per crawl, so they
 run on a multiple of that (CRAWL_PLAYWRIGHT_MULTIPLIER, default 4 =>
-hourly while active). Every trigger carries random jitter so a bank
+every 2 hours while active). Every trigger carries random jitter so a bank
 never sees this service arrive on an exact interval boundary.
 
 International sources (Frankfurter, fxRatesAPI) run INTL_CRAWLS_PER_DAY

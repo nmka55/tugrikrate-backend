@@ -6,7 +6,7 @@ same rates. Hashing the raw HTTP body does not achieve that:
 
 - Rendered pages (the Playwright five) carry build ids, CSRF tokens and
   analytics state that differ on every single load, so a raw hash would
-  insert a snapshot every 15 minutes forever.
+  insert a snapshot on every crawl forever.
 - Some JSON APIs embed data that moves without the rates moving -
   Capitron ships a growing `histories` array with per-day `created`
   timestamps, SendMN a `trend` indicator, Naiman Sharga

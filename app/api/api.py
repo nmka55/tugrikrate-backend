@@ -55,7 +55,7 @@ async def lifespan(app: FastAPI):
             "not expose this server publicly; production must set "
             "APP_API_KEYS and REQUIRE_APP_KEY=true."
         )
-    # The scheduler runs in-process: a 15-minute cadence is well below
+    # The scheduler runs in-process: a 30-minute cadence is well below
     # what an external HTTP trigger can hold to reliably. Set
     # SCHEDULER_ENABLED=false to drive crawls via /api/admin/crawl
     # instead, e.g. from a separate worker.

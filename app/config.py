@@ -80,17 +80,21 @@ class Config:
         "CRAWL_ACTIVE_START_HOUR", 8
     )
     CRAWL_ACTIVE_END_HOUR = _env_non_negative_int("CRAWL_ACTIVE_END_HOUR", 20)
+    # Twice an hour during banking hours (owner's request, 2026-10-08;
+    # was 15 minutes). Banks move their rates a few times a day, so
+    # :00/:30 still catches a change within half an hour while halving
+    # the requests to every bank.
     CRAWL_ACTIVE_INTERVAL_MINUTES = _env_positive_int(
-        "CRAWL_ACTIVE_INTERVAL_MINUTES", 15
+        "CRAWL_ACTIVE_INTERVAL_MINUTES", 30
     )
     CRAWL_OFFPEAK_INTERVAL_MINUTES = _env_positive_int(
         "CRAWL_OFFPEAK_INTERVAL_MINUTES", 60
     )
     # Spread each fire randomly over +/- this many seconds so a bank
-    # never sees requests land on an exact 15-minute boundary.
+    # never sees requests land on an exact interval boundary.
     CRAWL_JITTER_SECONDS = _env_non_negative_int("CRAWL_JITTER_SECONDS", 90)
     # Playwright sources cost a headless Chromium each, so they run on
-    # a multiple of the base interval (4 => hourly while active).
+    # a multiple of the base interval (4 => every 2 h while active).
     CRAWL_PLAYWRIGHT_MULTIPLIER = _env_positive_int(
         "CRAWL_PLAYWRIGHT_MULTIPLIER", 4
     )
@@ -199,7 +203,7 @@ class Config:
     # are saved as they complete; one still running past this is reported
     # overdue and left to finish in the background, so it can no longer
     # keep the job open and make the next slot skip every source. Under
-    # the 15-minute active cadence on purpose.
+    # the 30-minute active cadence on purpose.
     CRAWL_BATCH_DEADLINE_SECONDS = _env_positive_int(
         "CRAWL_BATCH_DEADLINE_SECONDS", 600
     )
