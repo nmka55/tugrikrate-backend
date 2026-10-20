@@ -63,8 +63,7 @@ class Config:
     # Database
     DATABASE_URL = _database_url()
 
-    # Scheduler. Crawls run on a fast cadence during Mongolian banking
-    # hours and an hourly one outside them, both in local time - banks
+    # Scheduler. Bank crawls follow local working hours - banks
     # republish on their own working day, not on UTC.
     SCHEDULER_ENABLED = _env_bool("SCHEDULER_ENABLED", True)
     # Which source group this process collects. "all" (default) keeps
@@ -76,28 +75,32 @@ class Config:
     if CRAWL_GROUP not in ("all", "fast", "slow"):
         raise ValueError("CRAWL_GROUP must be one of: all, fast, slow")
     CRAWL_TIMEZONE = _env("CRAWL_TIMEZONE", "Asia/Ulaanbaatar")
+    # Bank crawl cadence (owner's choice, 2026-10-20), local time.
+    # Working hours 09:00-18:00: JSON banks every 45 min, Playwright
+    # banks every 3 h. After close the gap before the next 09:00 is
+    # filled at a slower step: JSON every 6 h (00:00, 06:00), Playwright
+    # every 5 h (23:00, 04:00). Slots are built in freshness.slots_for.
     CRAWL_ACTIVE_START_HOUR = _env_non_negative_int(
-        "CRAWL_ACTIVE_START_HOUR", 8
+        "CRAWL_ACTIVE_START_HOUR", 9
     )
-    CRAWL_ACTIVE_END_HOUR = _env_non_negative_int("CRAWL_ACTIVE_END_HOUR", 20)
-    # Twice an hour during banking hours (owner's request, 2026-10-08;
-    # was 15 minutes). Banks move their rates a few times a day, so
-    # :00/:30 still catches a change within half an hour while halving
-    # the requests to every bank.
-    CRAWL_ACTIVE_INTERVAL_MINUTES = _env_positive_int(
-        "CRAWL_ACTIVE_INTERVAL_MINUTES", 30
+    CRAWL_ACTIVE_END_HOUR = _env_non_negative_int("CRAWL_ACTIVE_END_HOUR", 18)
+    if not 0 <= CRAWL_ACTIVE_START_HOUR < CRAWL_ACTIVE_END_HOUR <= 23:
+        raise ValueError("CRAWL_ACTIVE_* hours must satisfy 0 <= start < end")
+    CRAWL_JSON_ACTIVE_MINUTES = _env_positive_int(
+        "CRAWL_JSON_ACTIVE_MINUTES", 45
     )
-    CRAWL_OFFPEAK_INTERVAL_MINUTES = _env_positive_int(
-        "CRAWL_OFFPEAK_INTERVAL_MINUTES", 60
+    CRAWL_JSON_OFFPEAK_MINUTES = _env_positive_int(
+        "CRAWL_JSON_OFFPEAK_MINUTES", 360
+    )
+    CRAWL_BROWSER_ACTIVE_MINUTES = _env_positive_int(
+        "CRAWL_BROWSER_ACTIVE_MINUTES", 180
+    )
+    CRAWL_BROWSER_OFFPEAK_MINUTES = _env_positive_int(
+        "CRAWL_BROWSER_OFFPEAK_MINUTES", 300
     )
     # Spread each fire randomly over +/- this many seconds so a bank
     # never sees requests land on an exact interval boundary.
     CRAWL_JITTER_SECONDS = _env_non_negative_int("CRAWL_JITTER_SECONDS", 90)
-    # Playwright sources cost a headless Chromium each, so they run on
-    # a multiple of the base interval (4 => every 2 h while active).
-    CRAWL_PLAYWRIGHT_MULTIPLIER = _env_positive_int(
-        "CRAWL_PLAYWRIGHT_MULTIPLIER", 4
-    )
     # How far back a source may look for its most recent publication
     # before giving up (Naiman Sharga has 3-day gaps).
     SOURCE_LOOKBACK_DAYS = _env_non_negative_int("SOURCE_LOOKBACK_DAYS", 7)
@@ -105,7 +108,7 @@ class Config:
     # International foreign-exchange sources (Frankfurter, fxratesapi).
     # Each publishes
     # a daily table, so it is fetched INTL_CRAWLS_PER_DAY times a day -
-    # never on the banks' 15-minute cadence - one request per fetch.
+    # independent of the banks' crawl times - one request per fetch.
     # 4 (every 6 h) is the owner's chosen ceiling. It must divide 24 so
     # the fetches are evenly spaced.
     INTL_CRAWLS_PER_DAY = _env_positive_int("INTL_CRAWLS_PER_DAY", 4)
@@ -203,7 +206,7 @@ class Config:
     # are saved as they complete; one still running past this is reported
     # overdue and left to finish in the background, so it can no longer
     # keep the job open and make the next slot skip every source. Under
-    # the 30-minute active cadence on purpose.
+    # the shortest gap between bank crawls on purpose.
     CRAWL_BATCH_DEADLINE_SECONDS = _env_positive_int(
         "CRAWL_BATCH_DEADLINE_SECONDS", 600
     )

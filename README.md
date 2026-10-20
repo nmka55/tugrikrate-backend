@@ -123,15 +123,15 @@ Swagger UI is at `/`.
 
 **Cadence** (all Asia/Ulaanbaatar):
 
-| Sources | 08:00–20:00 | Otherwise |
+| Sources | 09:00–18:00 | After close |
 | --- | --- | --- |
-| 10 JSON-API sources | every 30 min | hourly |
-| 5 rendered-page sources (Playwright) | every 2 h | every 4 h |
+| 10 JSON-API sources | every 45 min | every 6 h (00:00, 06:00) |
+| 5 rendered-page sources (Playwright) | every 3 h | every 5 h (23:00, 04:00) |
+| Frankfurter / fxRatesAPI | 00:00, 06:00, 12:00, 18:00 | same |
 
 Every trigger carries random jitter (`CRAWL_JITTER_SECONDS`, default
-±90s) so no bank is hit on an exact interval boundary. The browser
-sources are throttled by `CRAWL_PLAYWRIGHT_MULTIPLIER` because each
-crawl costs a headless Chromium.
+±90s) so no bank is hit on an exact boundary; set it to `0` for exact
+times.
 
 **Snapshots.** A `rate_snapshots` row is written only when the payload
 hash changes. An unchanged crawl bumps `last_checked_at` on the existing
@@ -235,7 +235,7 @@ To recreate it from scratch:
 3. **Environment** - `DATABASE_URL`, `APP_API_KEYS`,
    `REQUIRE_APP_KEY=true`, `FXRATESAPI_KEY`, `ADMIN_API_KEY`,
    `MAX_WORKERS=4`, `PLAYWRIGHT_MAX_WORKERS=1`,
-   `CRAWL_PLAYWRIGHT_MULTIPLIER=8`, `TRUST_PROXY_HEADERS=true`; then,
+   `TRUST_PROXY_HEADERS=true`; then,
    once the URL exists, `PUBLIC_BASE_URL=https://<service>.onrender.com`
    and `SELF_PING_URL=https://<service>.onrender.com/api/health` (both
    **with** `https://`).
@@ -244,7 +244,7 @@ To recreate it from scratch:
 
 ### Other deployment notes
 
-A 30-minute cadence is below what an external HTTP trigger (GitHub
+45-minute steps are not something an external HTTP trigger (GitHub
 Actions cron, for example) can reliably hold — which is why the
 scheduler moved in-process. Set `SCHEDULER_ENABLED=false` and drive
 `POST /api/admin/crawl` yourself if you would rather run collection
@@ -264,14 +264,13 @@ Everything has a working default; see `app/config.py` for the full list.
 | `ADMIN_API_KEY` | (empty) | Secures `/api/admin/*`. Empty means 503, never open |
 | `SCHEDULER_ENABLED` | `true` | Run the in-process scheduler |
 | `CRAWL_TIMEZONE` | `Asia/Ulaanbaatar` | Cadence is local, not UTC |
-| `CRAWL_ACTIVE_START_HOUR` / `_END_HOUR` | `8` / `20` | Fast-cadence window |
-| `CRAWL_ACTIVE_INTERVAL_MINUTES` | `30` | Interval inside that window |
-| `CRAWL_OFFPEAK_INTERVAL_MINUTES` | `60` | Interval outside it |
+| `CRAWL_ACTIVE_START_HOUR` / `_END_HOUR` | `9` / `18` | Working hours (local) |
+| `CRAWL_JSON_ACTIVE_MINUTES` / `_OFFPEAK_MINUTES` | `45` / `360` | JSON-bank step inside / after working hours |
+| `CRAWL_BROWSER_ACTIVE_MINUTES` / `_OFFPEAK_MINUTES` | `180` / `300` | Playwright-bank step inside / after working hours |
 | `CRAWL_JITTER_SECONDS` | `90` | Random spread on every trigger |
 | `CRAWL_GROUP` | `all` | `all`, `fast` or `slow` — which sources this process collects |
-| `CRAWL_PLAYWRIGHT_MULTIPLIER` | `4` | How much less often browser sources run |
 | `SOURCE_LOOKBACK_DAYS` | `7` | How far back a source may look for its last publication |
-| `STALE_AFTER_INTERVALS` | `3` | Missed intervals before `stale` |
+| `STALE_AFTER_INTERVALS` | `3` | Missed gaps between crawl times before `stale` |
 | `FAILING_AFTER_ATTEMPTS` | `3` | Consecutive failures before `failing` |
 | `PUBLISHED_STALE_HOURS` | `36` | Publication age before `stale` |
 | `SNAPSHOT_RETENTION_DAYS` | `0` | `0` keeps everything |

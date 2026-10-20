@@ -3,15 +3,11 @@
 Replaces upstream's `schedule`-library daily 09:00 job, which had no
 timezone handling and no way to vary cadence per source.
 
-Cadence, all in Asia/Ulaanbaatar:
-
-    08:00-20:00   every 30 min   (CRAWL_ACTIVE_INTERVAL_MINUTES)
-    otherwise     hourly         (CRAWL_OFFPEAK_INTERVAL_MINUTES)
-
-The five Playwright sources cost a headless Chromium per crawl, so they
-run on a multiple of that (CRAWL_PLAYWRIGHT_MULTIPLIER, default 4 =>
-every 2 hours while active). Every trigger carries random jitter so a bank
-never sees this service arrive on an exact interval boundary.
+Banks are crawled on slots from freshness.slots_for, in
+Asia/Ulaanbaatar. Defaults: JSON banks every 45 min over 09:00-18:00
+and every 6 h after close; Playwright banks every 3 h over working
+hours and every 5 h overnight. Every trigger carries random jitter so
+a bank never sees this service arrive on an exact boundary.
 
 International sources (Frankfurter, fxRatesAPI) run INTL_CRAWLS_PER_DAY
 times a day around the clock. One whose API key is not configured is
@@ -25,6 +21,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from app.config import config
 from app.services.collector import crawl_sources
+from app.services.freshness import slots_for
 from app.sources.registry import (
     CADENCE_DAILY,
     CADENCE_FAST,
@@ -36,17 +33,7 @@ from app.utils.logger import logger
 _scheduler: BackgroundScheduler | None = None
 
 
-def _active_hours() -> list[int]:
-    start, end = config.CRAWL_ACTIVE_START_HOUR, config.CRAWL_ACTIVE_END_HOUR
-    return [hour % 24 for hour in range(start, end)]
-
-
-def _offpeak_hours() -> list[int]:
-    active = set(_active_hours())
-    return [hour for hour in range(24) if hour not in active]
-
-
-def _cron_fields(interval: int, hours: list[int]) -> dict | None:
+def _cron_fields(interval: int, hours) -> dict | None:
     """Express "every `interval` minutes, within `hours`" as cron.
 
     Returns None when the window has no slots at this interval, so the
@@ -54,12 +41,6 @@ def _cron_fields(interval: int, hours: list[int]) -> dict | None:
     """
     if not hours:
         return None
-    if interval < 60:
-        step = interval if 60 % interval == 0 else 60
-        return {
-            "minute": f"*/{step}",
-            "hour": ",".join(str(h) for h in sorted(hours)),
-        }
     step_hours = max(1, interval // 60)
     chosen = [h for h in sorted(hours) if h % step_hours == 0]
     if not chosen:
@@ -71,10 +52,8 @@ def _register(
     scheduler: BackgroundScheduler,
     job_id: str,
     specs: tuple,
-    interval: int,
-    hours: list[int],
+    fields: dict | None,
 ) -> None:
-    fields = _cron_fields(interval, hours)
     if fields is None or not specs:
         return
     trigger = CronTrigger(
@@ -87,17 +66,17 @@ def _register(
         trigger=trigger,
         id=job_id,
         args=[specs],
-        # A crawl that overruns its slot must not stack on itself, and
-        # a missed slot should be dropped rather than replayed - the
-        # next one is only minutes away and carries fresher rates.
+        # A crawl that overruns its slot must not stack on itself. A
+        # slot missed by more than 15 minutes (a deploy restart) is
+        # dropped rather than replayed: the data would be stale anyway.
         max_instances=1,
         coalesce=True,
-        misfire_grace_time=300,
+        misfire_grace_time=900,
         replace_existing=True,
     )
     logger.info(
         f"Scheduled {job_id}: {len(specs)} source(s), "
-        f"every {interval}m at hours {fields['hour']} "
+        f"at {fields['hour']}:{fields['minute']} "
         f"({config.CRAWL_TIMEZONE}, +/-{config.CRAWL_JITTER_SECONDS}s jitter)"
     )
 
@@ -122,21 +101,16 @@ def build_scheduler(group: str | None = None) -> BackgroundScheduler:
     daily = tuple(s for s in daily if s.configured)
 
     scheduler = BackgroundScheduler(timezone=config.CRAWL_TIMEZONE)
-    active, offpeak = _active_hours(), _offpeak_hours()
-    fast = config.CRAWL_ACTIVE_INTERVAL_MINUTES
-    slow_mult = config.CRAWL_PLAYWRIGHT_MULTIPLIER
-    offpeak_interval = config.CRAWL_OFFPEAK_INTERVAL_MINUTES
 
-    _register(scheduler, "http-active", http, fast, active)
-    _register(scheduler, "http-offpeak", http, offpeak_interval, offpeak)
-    _register(scheduler, "browser-active", browser, fast * slow_mult, active)
-    _register(
-        scheduler,
-        "browser-offpeak",
-        browser,
-        offpeak_interval * slow_mult,
-        offpeak,
-    )
+    for kind, specs in (("http", http), ("browser", browser)):
+        if not specs:
+            continue
+        for slot in slots_for(specs[0]):
+            hour, minute = divmod(slot, 60)
+            fields = {"hour": str(hour), "minute": str(minute)}
+            _register(
+                scheduler, f"{kind}-{hour:02d}{minute:02d}", specs, fields
+            )
     if daily:
         _check_call_budget(daily)
         # One job around the clock: these publish once a day, so the
@@ -145,8 +119,7 @@ def build_scheduler(group: str | None = None) -> BackgroundScheduler:
             scheduler,
             "intl-daily",
             daily,
-            24 * 60 // config.INTL_CRAWLS_PER_DAY,
-            list(range(24)),
+            _cron_fields(24 * 60 // config.INTL_CRAWLS_PER_DAY, range(24)),
         )
     return scheduler
 

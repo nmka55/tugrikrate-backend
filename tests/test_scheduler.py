@@ -3,13 +3,10 @@
 from collections import Counter
 
 from app.config import config
-from app.services.scheduler import (
-    _active_hours,
-    _cron_fields,
-    _offpeak_hours,
-    build_scheduler,
-)
+from app.services.freshness import slots_for
+from app.services.scheduler import _cron_fields, build_scheduler
 from app.sources.registry import (
+    BY_ID,
     DAILY_SPECS,
     FAST_SPECS,
     SLOW_SPECS,
@@ -17,22 +14,7 @@ from app.sources.registry import (
 )
 
 
-class TestHourWindows:
-    def test_active_and_offpeak_partition_the_day(self):
-        assert sorted(_active_hours() + _offpeak_hours()) == list(range(24))
-
-    def test_active_window_matches_config(self):
-        assert _active_hours() == list(
-            range(config.CRAWL_ACTIVE_START_HOUR, config.CRAWL_ACTIVE_END_HOUR)
-        )
-
-
 class TestCronFields:
-    def test_sub_hourly_interval_uses_a_minute_step(self):
-        fields = _cron_fields(15, [8, 9, 10])
-        assert fields["minute"] == "*/15"
-        assert fields["hour"] == "8,9,10"
-
     def test_hourly_interval_fires_on_the_hour(self):
         assert _cron_fields(60, [1, 2])["minute"] == "0"
 
@@ -41,14 +23,8 @@ class TestCronFields:
         assert fields["minute"] == "0"
         assert fields["hour"] == "0,4,8,12,16,20"
 
-    def test_default_active_cadence_is_twice_an_hour(self):
-        """Owner's request, 2026-10-08: :00 and :30, not every 15 min."""
-        assert config.CRAWL_ACTIVE_INTERVAL_MINUTES == 30
-        job = build_scheduler().get_job("http-active")
-        assert "minute='*/30'" in str(job.trigger)
-
     def test_empty_window_yields_no_job(self):
-        assert _cron_fields(15, []) is None
+        assert _cron_fields(60, []) is None
 
     def test_multi_hour_interval_always_keeps_one_slot(self):
         # A narrow window whose hours never hit the stride must still
@@ -57,23 +33,74 @@ class TestCronFields:
         assert fields["hour"]
 
 
+def hhmm(slots):
+    return [f"{t // 60:02d}:{t % 60:02d}" for t in slots]
+
+
+class TestBankSlots:
+    """Owner's choice, 2026-10-20."""
+
+    def test_json_banks_every_45_min_in_working_hours_then_6_hourly(self):
+        assert hhmm(slots_for(BY_ID["khanbank"])) == [
+            "00:00",
+            "06:00",
+            "09:00",
+            "09:45",
+            "10:30",
+            "11:15",
+            "12:00",
+            "12:45",
+            "13:30",
+            "14:15",
+            "15:00",
+            "15:45",
+            "16:30",
+            "17:15",
+            "18:00",
+        ]
+
+    def test_browser_banks_every_3h_then_5h_overnight(self):
+        assert hhmm(slots_for(BY_ID["tdbm"])) == [
+            "04:00",
+            "09:00",
+            "12:00",
+            "15:00",
+            "18:00",
+            "23:00",
+        ]
+
+    def test_each_slot_gets_a_job_that_fires_then(self):
+        jobs = {j.id: j for j in build_scheduler().get_jobs()}
+        for kind, spec in (
+            ("http", BY_ID["khanbank"]),
+            ("browser", BY_ID["tdbm"]),
+        ):
+            for slot in slots_for(spec):
+                hour, minute = divmod(slot, 60)
+                trigger = jobs[f"{kind}-{hour:02d}{minute:02d}"].trigger
+                fields = {f.name: str(f) for f in trigger.fields}
+                assert fields["hour"] == str(hour)
+                assert fields["minute"] == str(minute)
+
+
 class TestSchedulerJobs:
-    def test_registers_all_five_cadence_jobs(self):
-        scheduler = build_scheduler()
-        ids = {job.id for job in scheduler.get_jobs()}
-        assert ids == {
-            "http-active",
-            "http-offpeak",
-            "browser-active",
-            "browser-offpeak",
-            "intl-daily",
-        }
+    def test_registers_a_job_per_slot_and_class(self):
+        ids = {job.id for job in build_scheduler().get_jobs()}
+        expected = {"intl-daily"}
+        for kind, spec in (
+            ("http", BY_ID["khanbank"]),
+            ("browser", BY_ID["tdbm"]),
+        ):
+            expected |= {
+                f"{kind}-{t // 60:02d}{t % 60:02d}" for t in slots_for(spec)
+            }
+        assert ids == expected
 
     def test_browser_and_http_sources_are_split(self):
         scheduler = build_scheduler()
         jobs = {job.id: job for job in scheduler.get_jobs()}
-        assert jobs["http-active"].args[0] == FAST_SPECS
-        assert jobs["browser-active"].args[0] == SLOW_SPECS
+        assert jobs["http-0945"].args[0] == FAST_SPECS
+        assert jobs["browser-0900"].args[0] == SLOW_SPECS
         assert len(SLOW_SPECS) == 5
         assert len(FAST_SPECS) == 10
         assert [s.id for s in DAILY_SPECS] == ["frankfurter", "fxratesapi"]
@@ -87,7 +114,7 @@ class TestSchedulerJobs:
 
     def test_triggers_carry_jitter(self):
         """Without jitter every source would hit each bank on the exact
-        same wall-clock boundary, every quarter hour, forever."""
+        same wall-clock boundary, every day, forever."""
         for job in build_scheduler().get_jobs():
             assert job.trigger.jitter == config.CRAWL_JITTER_SECONDS
 
@@ -119,11 +146,13 @@ class TestSourceGroups:
 
     def test_fast_process_schedules_no_browser_jobs(self):
         ids = {job.id for job in build_scheduler("fast").get_jobs()}
-        assert ids == {"http-active", "http-offpeak", "intl-daily"}
+        assert all(i.startswith("http-") or i == "intl-daily" for i in ids)
+        assert "intl-daily" in ids
 
     def test_slow_process_schedules_only_browser_jobs(self):
         ids = {job.id for job in build_scheduler("slow").get_jobs()}
-        assert ids == {"browser-active", "browser-offpeak"}
+        assert ids
+        assert all(i.startswith("browser-") for i in ids)
 
     def test_split_processes_cover_every_source_exactly_once(
         self, monkeypatch
@@ -136,15 +165,15 @@ class TestSourceGroups:
             for job in build_scheduler(group).get_jobs():
                 collected.extend(spec.id for spec in job.args[0])
 
-        # Each bank appears once per time-window job (active +
-        # offpeak), so exactly twice overall - never in both groups.
+        # Each bank appears once per crawl time, never in both groups.
         # The daily international sources share a single
         # around-the-clock job, so each appears exactly once.
         counts = Counter(collected)
         assert len(counts) == 17
         assert counts.pop("frankfurter") == 1
         assert counts.pop("fxratesapi") == 1
-        assert set(counts.values()) == {2}
+        for source_id, seen in counts.items():
+            assert seen == len(slots_for(BY_ID[source_id]))
 
     def test_a_source_without_its_key_is_not_scheduled(self):
         collected = {
@@ -174,7 +203,7 @@ class TestInvalidGroup:
 
 class TestInternationalSchedule:
     """The owner's rule: the foreign-exchange table is fetched 4 times a
-    day, never on the banks' 15-minute cadence."""
+    day, independent of the banks' fixed crawl times."""
 
     def intl_job(self):
         return {j.id: j for j in build_scheduler().get_jobs()}["intl-daily"]

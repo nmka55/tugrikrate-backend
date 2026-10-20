@@ -114,10 +114,7 @@ Consequences for the backend:
 **Still awaiting the owner's confirmation:**
 
 - *"4 times a day".* Applied to the international source only. The
-  banks are unchanged (every 30 min during 08:00-20:00 Ulaanbaatar,
-  hourly otherwise); their freshness matters to a converter and they
-  are not metered. `CRAWL_ACTIVE_INTERVAL_MINUTES` /
-  `CRAWL_OFFPEAK_INTERVAL_MINUTES` change that if intended.
+  banks have their own cadence (see Cadence).
 
 ## 4. How it is built
 
@@ -193,20 +190,33 @@ Consequences for the backend:
 
 All Asia/Ulaanbaatar, because banks republish on their own working day.
 
-| Group | 08:00–20:00 | Otherwise |
+| Group | 09:00-18:00 | After close |
 | --- | --- | --- |
-| 10 JSON sources (`fast`) | every 30 min (was 15 until 2026-10-08) | hourly |
-| 5 Playwright sources (`slow`) | every 2 h | every 4 h |
-| Frankfurter (`daily`, HTTP side) | `INTL_CRAWLS_PER_DAY` = 4: 00:00, 06:00, 12:00, 18:00, one request each | same (4 requests/day) |
+| 10 JSON sources (`fast`) | every 45 min (13 slots) | every 6 h: 00:00, 06:00 |
+| 5 Playwright sources (`slow`) | every 3 h: 09, 12, 15, 18 | every 5 h: 23:00, 04:00 |
+| Frankfurter (`daily`, HTTP side) | `INTL_CRAWLS_PER_DAY` = 4: 00:00, 06:00, 12:00, 18:00, one request each | same |
 
-**Why 30 minutes (2026-10-08, owner's request).** Banking hours used to
-crawl every 15 minutes. Banks move their rates a few times a day, so
-twice an hour still catches a change within half an hour, halves the
-requests each bank receives, and halves Render's CPU and Neon's wake-ups.
-The browser banks keep their 2-hour daytime cadence: the multiplier is
-4 against 30 minutes (Render had 8 against 15). The stale threshold
-follows automatically (`STALE_AFTER_INTERVALS` × interval = 90 minutes),
-and the batch deadline (600 s) stays inside the slot.
+**Why this cadence (2026-10-20, owner's choice).** Replaces the
+30-minute / hourly cadence. Slots come from `freshness.slots_for`, one
+function shared by the scheduler and the stale rule: working hours at
+the active step, then the stretch from close back round to the next
+09:00 at the off-peak step. The steps fit the day exactly (6 h after
+18:00 gives 00:00 and 06:00; 5 h gives 23:00 and 04:00), so 09:00 is
+always a slot. Whether banks really publish inside 09:00-18:00 is the
+owner's premise; nothing in this repo records a bank publication time
+(verified: none in the registry or docs).
+
+Consequences:
+
+- A change made after close reaches the app only at the next slot: up
+  to 6 h (JSON) or 5 h (Playwright) overnight.
+- Staleness follows the gap: `freshness.interval_minutes` is the gap
+  between the surrounding slots and `stale` is `STALE_AFTER_INTERVALS`
+  (3) x that, i.e. 135 min inside hours for a JSON bank, 18 h in the
+  evening gap.
+- `misfire_grace_time` is 15 minutes: a deploy restart that skips a
+  slot by longer drops that crawl instead of replaying it. Every deploy
+  restarts the scheduler (§8).
 
 Every trigger carries ±`CRAWL_JITTER_SECONDS` so no bank sees an exact
 interval boundary. `CRAWL_GROUP` (`all`/`fast`/`slow`) lets the
@@ -623,7 +633,7 @@ there is no conversion step anywhere that could reintroduce a float.
 
 ### Why the scheduler is in-process
 
-A 30-minute cadence is below what an external HTTP trigger (GitHub
+Hitting exact minutes is not something an external HTTP trigger (GitHub
 Actions cron) holds reliably. `SCHEDULER_ENABLED=false` hands control
 back to `POST /api/admin/crawl` for deployments that prefer it.
 
@@ -933,7 +943,7 @@ psycopg's prepared statements), `APP_API_KEYS`, `REQUIRE_APP_KEY=true`,
 `SELF_PING_URL` (both must include `https://` - without it the first
 deploy produced logo URLs starting with `-` and a failing self-ping),
 and the 512 MB tuning `MAX_WORKERS=4`, `PLAYWRIGHT_MAX_WORKERS=1`,
-`CRAWL_PLAYWRIGHT_MULTIPLIER=8`, `TRUST_PROXY_HEADERS=true`.
+`TRUST_PROXY_HEADERS=true`.
 
 **Free-plan limits that shape it.**
 - The instance sleeps after 15 minutes without inbound traffic, which

@@ -58,8 +58,8 @@ TYPE_REMITTANCE = "remittance"
 TYPE_INTERNATIONAL = "international_aggregator"
 
 # Cadence classes. "slow" is the Playwright set - headless Chromium is
-# far heavier per crawl, so these run on a multiple of the base interval
-# (CRAWL_PLAYWRIGHT_MULTIPLIER).
+# far heavier per crawl, so they are scheduled in their own job (and may
+# run in their own process, CRAWL_GROUP=slow).
 CADENCE_FAST = "fast"
 CADENCE_SLOW = "slow"
 # Sources that publish a daily table (Frankfurter). Fetched

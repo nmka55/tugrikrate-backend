@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### Schedule (2026-10-20)
+
+- Changed: bank cadence is tied to working hours 09:00-18:00
+  (Asia/Ulaanbaatar). JSON banks: every 45 min inside, every 6 h after
+  close (00:00, 06:00). Playwright banks: every 3 h inside, every 5 h
+  after close (23:00, 04:00). New `CRAWL_JSON_*` / `CRAWL_BROWSER_*`
+  `_ACTIVE_MINUTES` / `_OFFPEAK_MINUTES` settings; active hours default
+  9-18; `CRAWL_PLAYWRIGHT_MULTIPLIER` and `CRAWL_OFFPEAK_INTERVAL_MINUTES`
+  are gone (delete the multiplier on Render). Frankfurter unchanged.
+
 ### Crawlers (2026-10-08)
 
 - Changed: banking-hours crawls run twice an hour (`:00`/`:30`, was

@@ -24,28 +24,45 @@ def local_now(at: datetime | None = None) -> datetime:
     return at.astimezone(ZoneInfo(config.CRAWL_TIMEZONE))
 
 
-def is_active_hours(at: datetime | None = None) -> bool:
-    """True during Mongolian banking hours, when banks actually move
-    their rates and the fast cadence is worth paying for."""
-    hour = local_now(at).hour
-    return (
-        config.CRAWL_ACTIVE_START_HOUR <= hour < config.CRAWL_ACTIVE_END_HOUR
-    )
+def slots_for(spec: SourceSpec) -> list[int]:
+    """Minutes-of-day (local) at which this source is crawled.
+
+    Working hours run from CRAWL_ACTIVE_START_HOUR to the end hour at the
+    active step; the stretch from close back round to the next opening
+    is filled at the off-peak step, so a 6 h step after an 18:00 close
+    gives 00:00 and 06:00 before 09:00 resumes. JSON and Playwright
+    banks have their own steps.
+    """
+    if spec.cadence == CADENCE_SLOW:
+        active = config.CRAWL_BROWSER_ACTIVE_MINUTES
+        offpeak = config.CRAWL_BROWSER_OFFPEAK_MINUTES
+    else:
+        active = config.CRAWL_JSON_ACTIVE_MINUTES
+        offpeak = config.CRAWL_JSON_OFFPEAK_MINUTES
+    start = config.CRAWL_ACTIVE_START_HOUR * 60
+    end = config.CRAWL_ACTIVE_END_HOUR * 60
+    slots = set(range(start, end + 1, active))
+    slots.update(t % 1440 for t in range(end, start + 1440, offpeak))
+    return sorted(slots)
 
 
 def interval_minutes(spec: SourceSpec, at: datetime | None = None) -> int:
-    """Expected minutes between crawls of this source right now."""
+    """Expected minutes between crawls of this source right now.
+
+    For a bank this is the gap between the two slots (`slots_for`) that
+    surround `at`, wrapping past midnight, so a long overnight gap is
+    not mistaken for an outage and short daytime ones are held to a
+    tighter allowance.
+    """
     if spec.cadence == CADENCE_DAILY:
-        # Not tied to banking hours: it publishes a daily table.
+        # Not tied to the bank slots: it publishes a daily table.
         return 24 * 60 // config.INTL_CRAWLS_PER_DAY
-    base = (
-        config.CRAWL_ACTIVE_INTERVAL_MINUTES
-        if is_active_hours(at)
-        else config.CRAWL_OFFPEAK_INTERVAL_MINUTES
-    )
-    if spec.cadence == CADENCE_SLOW:
-        base *= config.CRAWL_PLAYWRIGHT_MULTIPLIER
-    return base
+    local = local_now(at)
+    now = local.hour * 60 + local.minute
+    slots = slots_for(spec)
+    previous = max((t for t in slots if t <= now), default=slots[-1] - 1440)
+    following = min((t for t in slots if t > now), default=slots[0] + 1440)
+    return following - previous
 
 
 def compute_status(
