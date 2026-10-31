@@ -817,7 +817,7 @@ read; nothing above was assumed.
       (`tests/test_database.py` simulates a killed connection; the
       same simulation without pre-ping fails).
 
-**Not done / known gaps**
+**Not done / known gaps (September 30 record; see October 31 update below)**
 
 - [ ] **The iOS app is not connected yet.** No client exists.
 - [ ] **Browser banks and foreign sources not yet seen live.** The 5
@@ -875,11 +875,12 @@ the sandbox with a bare 406 while Render reaches it).
       by position, and a future-dated row is never taken.
 - [x] Crawl-run deadline, one crawl per source, persistence retry
       (see §5 "Why a crawl run has a deadline").
-- [ ] **Naiman Sharga has published nothing since 2026-09-26.** Its
+- [x] **Superseded October 31: Naiman Sharga's old collection stopped.** Its
       Firestore collection `currency_rates` (one document per day)
       ends on 2026-09-26; the crawler's 7-day lookback reached it until
       2026-10-03 and has returned 0 quotes since (267 failures in a row
-      on 2026-10-08). Not a crawler bug. The same project has an
+      on 2026-10-08). The initial diagnosis missed the app's new
+      company collection (fixed October 31 below). The same project has an
       `exchange_rates` collection updated daily to 2026-10-08, but it
       is a different dataset: only CNY, KRW, RUB (and MNT = 1), with
       different numbers (CNY 536/542 against `currency_rates`'
@@ -889,11 +890,65 @@ the sandbox with a bare 406 while Render reaches it).
       evidence of what the figures are. Until then the source stays
       `failing` and keeps serving its last good snapshot.
 
+**2026-10-31 — selective upstream v1.1.1 update and Render usage audit.**
+
+Full analysis, upstream commit mapping, resumable checklist and production
+handoff: [maintenance audit](docs/maintenance-2026-10-31.md). Compared
+upstream `6cde736` (October 26) against common ancestor `73b1db8`.
+
+- Naiman Sharga moved on September 27 to
+  `currency_rates_new/<date>/companies/sdKPfYBtU9anGKBmOSiDcpKSnGB3`.
+  Live company metadata confirms **NSHMT / Найман шарга мэдээллийн төв**.
+  The patched crawler returned 44 quotes for October 31, all with the
+  existing `unspecified` channel. Preserve the seven-day lookback and
+  actual publication date; do not use the unrelated `exchange_rates`
+  dataset. New `NSHARGA_COMPANY_ID` has the verified upstream default.
+- TransBank uses its homepage, carrying the same `__NEXT_DATA__` without
+  requiring a visible table. Live Playwright crawl succeeded with 10
+  currency entries for October 31; USD cash buy/sell 3591/3621. Keep
+  the fork's existing side mapping. Upstream changed URLs because its
+  exchange page returned 500 on October 26; our production feed still
+  reached the old page on October 31, so the failure was not universal.
+- ArigBank supports optional `ARIGBANK_PROXY_URL`, scoped to sign-in
+  and rate requests (including token refresh). The live production
+  feed reports `failing`, last success October 21, and a direct local
+  sign-in probe timed out. A trusted reachable proxy must be supplied
+  if Render still cannot reach the bank; adding the option alone does
+  not resolve connectivity. No proxy is provisioned or paid for here.
+- Non-ASCII admin headers now return 401 instead of raising from
+  `compare_digest`; the fork's app-key gate had the same problem and
+  now withholds restricted sources with a normal 200 response.
+- Development packages moved to `requirements-dev.txt` (Black 26.10.1,
+  httpx2 2.16.0 per upstream); production keeps runtime `httpx` because
+  it still uses self-ping. Docker tests/CI install dev requirements;
+  HTTP health checks reject error status codes and local tool state
+  stays outside the build context. Keep formatter target `py313`.
+- Validation exposed a collector-test race from sharing one in-memory
+  SQLite connection across threads. Those tests now use a temporary file
+  database with separate connections; production behavior is unchanged.
+  All 381 tests and lint/format checks pass; production-only dependency
+  startup and unchanged OpenAPI were verified. Docker was unavailable
+  locally, so the container build remains a CI check before deployment.
+- Preserve Render support, snapshot semantics, Decimal handling and
+  empty-crawl failure isolation. Upstream's legacy backfill ordering,
+  float parser and Render removal do not apply to this fork.
+- Live feed audit: **13 banks ok, ArigBank and Naiman Sharga failing**.
+  TDBM, NIB and the other browser sources now have recent successes,
+  resolving the old unverified deployment observations above. This
+  audit did not redeploy the local changes or write production data.
+- Render confirms exactly one free web service with one instance,
+  previews off, deployed `09b22ca`, not suspended. No failure or
+  suspension events in the last seven days. The user's email (four
+  days earlier) said 619/750 hours. One continuous instance fits even
+  a 31-day month: **744 hours**, leaving six. Keep the bank/FX cadence.
+  Self-ping now defaults to **600 seconds** rather than 30, reducing
+  requests by 95%; this does not change running-instance hours.
+
 ## 7. Running locally
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 python -m playwright install chromium
 
 python -m scripts.migrate_v1                 # schema
@@ -948,8 +1003,15 @@ and the 512 MB tuning `MAX_WORKERS=4`, `PLAYWRIGHT_MAX_WORKERS=1`,
 **Free-plan limits that shape it.**
 - The instance sleeps after 15 minutes without inbound traffic, which
   would stop the scheduler; `SELF_PING_URL` keeps it awake. One
-  always-on service uses ~744 of the 750 free hours a month, so there
-  is room for exactly one such service.
+  always-on service uses 744 of the 750 workspace-wide free hours in a
+  31-day month (720 in 30 days). Jobs, worker threads and requests do
+  not each consume separate instance hours. Reducing crawl frequency
+  cannot save hours while the instance remains running. The default
+  `SELF_PING_INTERVAL_SECONDS=600` stays below the idle timeout; remove
+  any old 30-second override to reduce request overhead. Do not add a
+  second free web service: two continuously running services would use
+  1,488 hours in a 31-day month. Current billing total is available in
+  Render's Billing dashboard; see [Render's rules](https://render.com/docs/free).
 - 512 MB RAM / 0.1 CPU: see the first known gap in §6. Fallbacks, in
   order: `CRAWL_GROUP=fast`; a 2 GB instance ($25/month on Render's
   Standard plan - its $7 Starter plan is still 512 MB).
@@ -966,3 +1028,19 @@ Render's API (`https://api.render.com/v1`, `Authorization: Bearer`)
 gives deploys, logs and env vars; from a sandbox that blocks port 5432,
 Neon is reachable through `POST https://<host>/sql` with the
 `Neon-Connection-String` header.
+
+**Applying the October 31 fixes.** Deploy the reviewed code after CI
+passes. Remove old `NSHARGA_FIRESTORE_BASE_URL` and `TRANSBANK_URI`
+overrides to use the new defaults, or explicitly set the values in the
+[audit checklist](docs/maintenance-2026-10-31.md). Naiman Sharga needs
+no new private key or database migration. Check ArigBank logs and
+configure a trusted per-bank proxy only if connectivity still fails.
+The connected Render tools have no read-only environment or billing
+endpoint, so the current override values were not inspected or changed.
+
+**October 31 release authorization.** The owner subsequently requested Git
+push, deployment and live verification, with the results recorded in the
+project log. Release tracking is in the audit's authorized-release checklist.
+Use the existing main-branch after-CI auto-deploy; retain one free instance,
+Neon, all source/auth invariants and the current crawl cadence. Verify the
+specific deployed commit and API behavior before declaring completion.

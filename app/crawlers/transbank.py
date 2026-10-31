@@ -41,7 +41,13 @@ class TransBank(PlaywrightCrawler):
         # (analytics/polling), so "networkidle" reliably times out even
         # though the page itself renders in well under PLAYWRIGHT_TIMEOUT.
         page.goto(url, timeout=self.timeout, wait_until="domcontentloaded")
-        page.wait_for_selector("table", timeout=self.timeout)
+        # The homepage has the same rate JSON without a visible table.
+        # A script tag is attached to the DOM but never visible.
+        page.wait_for_selector(
+            "script#__NEXT_DATA__, table",
+            state="attached",
+            timeout=self.timeout,
+        )
 
         script = page.locator("script#__NEXT_DATA__").first
         if script.count():

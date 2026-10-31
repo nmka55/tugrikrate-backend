@@ -31,6 +31,15 @@ class TestAuth:
         monkeypatch.setattr("app.config.config.ADMIN_API_KEY", "secret")
         assert client.post("/api/admin/crawl").status_code == 401
 
+    def test_non_ascii_key_is_rejected_without_server_error(
+        self, client, monkeypatch
+    ):
+        monkeypatch.setattr("app.config.config.ADMIN_API_KEY", "secret")
+        response = client.post(
+            "/api/admin/crawl", headers={"X-Admin-Key": b"caf\xe9"}
+        )
+        assert response.status_code == 401
+
 
 class TestCrawlTrigger:
     def test_accepted_with_valid_key(self, client, monkeypatch):

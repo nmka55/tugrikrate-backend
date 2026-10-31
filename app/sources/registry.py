@@ -321,6 +321,9 @@ SPECS: tuple[SourceSpec, ...] = (
         cadence=CADENCE_FAST,
         slots=_UNLABELLED_PAIR,
         evidence=(
+            "Since 2026-09-27: currency_rates_new/<date>/companies/"
+            "sdKPfYBtU9anGKBmOSiDcpKSnGB3 (NSHMT account, upstream "
+            "v1.1.1; live document verified 2026-10-31). "
             "Publishes one pair per currency - 'avah' (авах, buy) and "
             "'zarah' (зарах, sell) - with no channel stated anywhere in "
             "the document. Being a physical exchange bureau suggests "

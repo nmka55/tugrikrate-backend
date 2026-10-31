@@ -6,10 +6,11 @@ import time
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.config import config
-from app.models.snapshot import RateSnapshot, SourceState
+from app.models.snapshot import Base, RateSnapshot, SourceState
 from app.services import collector
 from app.sources.models import CrawlResult, Quote
 from app.sources.registry import BY_ID
@@ -26,8 +27,26 @@ def ok_result(spec, rate="3586"):
 
 
 @pytest.fixture
+def test_db(tmp_path):
+    """Concurrent sessions need separate database connections.
+
+    The API tests' in-memory StaticPool shares one connection between
+    threads, allowing one session's rollback/close to undo another's
+    write. A temporary file preserves real transaction isolation while
+    still keeping these tests independent of production and Postgres.
+    """
+    engine = create_engine(f"sqlite:///{tmp_path / 'collector.db'}")
+    Base.metadata.create_all(engine)
+    try:
+        with sessionmaker(bind=engine)() as db:
+            yield db
+    finally:
+        engine.dispose()
+
+
+@pytest.fixture
 def sessions(test_db, monkeypatch):
-    """Point the collector's SessionLocal at the in-memory test database."""
+    """Point the collector's SessionLocal at the isolated test database."""
     factory = sessionmaker(bind=test_db.get_bind())
     monkeypatch.setattr(collector, "SessionLocal", factory)
     return factory

@@ -30,7 +30,7 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 
 # Dependencies суулгах
 python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 python -m playwright install chromium
 ```
 
@@ -39,9 +39,13 @@ python -m playwright install chromium
 ```bash
 # main branch-аас шинэ branch үүсгэх
 git checkout main
-git pull upstream main
-git checkout -b feature/таны-өөрчлөлт
+git pull --ff-only origin main
+git checkout -b codex/таны-өөрчлөлт
 ```
+
+This fork selectively ports upstream crawler fixes. Do not merge
+`upstream/main` wholesale: it has a different API, data model and
+deployment. See `CLAUDE.md` and `docs/maintenance-2026-10-31.md`.
 
 #### Өөрчлөлт Хийх
 

@@ -46,7 +46,8 @@ def is_app_request(api_key: str | None = Security(_app_key_header)) -> bool:
     if not api_key:
         return False
     return any(
-        secrets.compare_digest(api_key, key) for key in config.APP_API_KEYS
+        secrets.compare_digest(api_key.encode(), key.encode())
+        for key in config.APP_API_KEYS
     )
 
 
@@ -58,7 +59,7 @@ def require_admin_key(api_key: str = Security(_admin_key_header)) -> None:
             503, "Admin endpoints are disabled (ADMIN_API_KEY not set)"
         )
     key_matches = api_key and secrets.compare_digest(
-        api_key, config.ADMIN_API_KEY
+        api_key.encode(), config.ADMIN_API_KEY.encode()
     )
     if not key_matches:
         raise HTTPException(401, "Invalid or missing X-Admin-Key header")

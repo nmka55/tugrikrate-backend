@@ -1,5 +1,9 @@
 """Naiman Sharga exchange bureau.
 
+The app moved to currency_rates_new/<date>/companies/<company id> on
+2026-09-27 (upstream v1.1.1). Use the NSHMT account by default; never
+substitute the separate exchange_rates dataset.
+
 Two changes from upstream.
 
 **Lookback.** Upstream tried today, then yesterday, then gave up. This
@@ -67,7 +71,10 @@ class NaimanSharga(BaseCrawler):
     @staticmethod
     def _document_url(target_date: str) -> str:
         parts = urlsplit(config.NSHARGA_FIRESTORE_BASE_URL)
-        path = f"{parts.path.rstrip('/')}/{target_date}"
+        path = (
+            f"{parts.path.rstrip('/')}/{target_date}"
+            f"/companies/{config.NSHARGA_COMPANY_ID}"
+        )
         return urlunsplit(
             (parts.scheme, parts.netloc, path, parts.query, parts.fragment)
         )

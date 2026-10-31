@@ -70,6 +70,16 @@ class TestRestrictedSources:
         seed_fx(test_db, source_id="fxratesapi")
         assert self.ids(client, **{"X-App-Key": "guess"}) == {"frankfurter"}
 
+    def test_non_ascii_key_withholds_restricted_data_without_server_error(
+        self, client, test_db, monkeypatch
+    ):
+        self.enable(monkeypatch)
+        seed_fx(test_db, source_id="fxratesapi")
+        response = client.get("/v1/fx", headers={"X-App-Key": b"caf\xe9"})
+        assert response.status_code == 200
+        assert {s["id"] for s in response.json()["sources"]} == {"frankfurter"}
+        assert response.headers["cache-control"].startswith("public")
+
     def test_development_mode_serves_it_without_a_key(
         self, client, test_db, monkeypatch
     ):

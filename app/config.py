@@ -171,9 +171,10 @@ class Config:
     # Self-ping keepalive (empty means disabled). Set to the app's own public
     # URL (e.g. https://your-app.onrender.com) to stop Render's free tier
     # from sleeping the instance after ~15 minutes of no inbound traffic.
+    # Ten minutes reduces request overhead, not running-instance hours.
     SELF_PING_URL = _env("SELF_PING_URL")
     SELF_PING_INTERVAL_SECONDS = _env_positive_int(
-        "SELF_PING_INTERVAL_SECONDS", 30
+        "SELF_PING_INTERVAL_SECONDS", 600
     )
 
     # Absolute origin used to build `logo_url` (e.g.
@@ -232,6 +233,9 @@ class Config:
         "ARIGBANK_SIGNIN_URL", "https://www.arigbank.mn/exchange/signIn"
     )
     ARIGBANK_BEARER_TOKEN = _env("ARIGBANK_BEARER_TOKEN")
+    # Optional per-bank proxy when this host cannot reach ArigBank.
+    # Keep this scoped to its sign-in and rate requests.
+    ARIGBANK_PROXY_URL = _env("ARIGBANK_PROXY_URL")
     STATEBANK_URI = _env(
         "STATEBANK_URI", "https://www.statebank.mn/back/api/fetchrate"
     )
@@ -257,7 +261,7 @@ class Config:
     BOGDBANK_URI = _env("BOGDBANK_URI", "https://www.bogdbank.com/exchange")
     CKBANK_URI = _env("CKBANK_URI", "https://www.ckbank.mn/currency-rates")
     NIBANK_URI = _env("NIBANK_URI", "https://www.nibank.mn/en/rate")
-    TRANSBANK_URI = _env("TRANSBANK_URI", "https://transbank.mn/en/exchange")
+    TRANSBANK_URI = _env("TRANSBANK_URI", "https://transbank.mn/en")
     MBANK_URI = _env("MBANK_URI", "https://m-bank.mn/")
 
     # Firebase Firestore-based APIs
@@ -267,7 +271,12 @@ class Config:
     )
     NSHARGA_FIRESTORE_BASE_URL = _env(
         "NSHARGA_FIRESTORE_BASE_URL",
-        "https://firestore.googleapis.com/v1/projects/nsharga-2ec6a/databases/(default)/documents/currency_rates?key=AIzaSyBA-tL_dqi1MsO43OkwllUpV7k6rf0Iys4",
+        "https://firestore.googleapis.com/v1/projects/nsharga-2ec6a/databases/(default)/documents/currency_rates_new?key=AIzaSyBA-tL_dqi1MsO43OkwllUpV7k6rf0Iys4",
+    )
+    # Since 2026-09-27 the app stores each company's rates separately.
+    # NSHMT (Найман шарга мэдээллийн төв), as identified upstream.
+    NSHARGA_COMPANY_ID = _env(
+        "NSHARGA_COMPANY_ID", "sdKPfYBtU9anGKBmOSiDcpKSnGB3"
     )
 
 

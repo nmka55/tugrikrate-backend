@@ -29,7 +29,7 @@ stable contract at `GET /v1/rates`. The iOS app is the only consumer.
 
 Forked from MIT-licensed
 [btseee/mongolian-bank-exchange-rate](https://github.com/btseee/mongolian-bank-exchange-rate)
-(remote: `upstream`, no `origin`).
+(origin: `nmka55/tugrikrate-backend`; add an `upstream` remote if absent).
 
 ## The three invariants
 
@@ -196,12 +196,20 @@ Read `ARCHITECTURE.md` first — it carries the why behind all of this.
   group containing a Playwright source.
 - Dependencies are exact-pinned (`==`). Bump deliberately and re-run
   the full check sequence.
+- Runtime dependencies are in `requirements.txt`; development/test
+  tools are in `requirements-dev.txt`. Keep `httpx` at runtime: this
+  fork retains self-ping even though upstream v1.1.1 removed it.
+- The October 31 upstream/Render audit and deployment checklist are
+  in `docs/maintenance-2026-10-31.md`. Naiman Sharga uses the new
+  company collection, TransBank defaults to its homepage, ArigBank
+  supports an optional per-bank proxy. Keep self-ping at 600 seconds;
+  crawl frequency does not reduce Render running-instance hours.
 
 ## Local dev
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 python -m playwright install chromium
 
 isort app tests scripts main.py --check-only && black app tests scripts main.py --check

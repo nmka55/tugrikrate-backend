@@ -19,9 +19,10 @@ by **[Battseren Badral](https://github.com/btseee)**, MIT licensed. All
 for crawler fixes. The original MIT license is retained in
 [LICENSE.md](LICENSE.md). Thank you.
 
-Upstream is configured as the `upstream` remote:
+To review upstream changes (add the remote once if it is absent):
 
 ```bash
+git remote add upstream https://github.com/btseee/mongolian-bank-exchange-rate.git
 git fetch upstream
 git log --oneline HEAD..upstream/main -- app/crawlers/   # crawler fixes
 git cherry-pick <sha>
@@ -31,6 +32,9 @@ git cherry-pick <sha>
 merge cleanly. Everything a crawler *claims* — which channels it
 publishes, which side is which, what unit a rate is quoted in — lives in
 `app/sources/registry.py` instead, which upstream never touches.
+Review each patch before cherry-picking: upstream v1.1.1 removed Render
+support, which this fork still needs. The selective October 31 update is
+recorded in [the maintenance audit](docs/maintenance-2026-10-31.md).
 
 ## The contract
 
@@ -170,7 +174,7 @@ a failure never touches the last good snapshot.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 python -m playwright install chromium
 
 python -m scripts.migrate_v1     # create the schema
@@ -244,6 +248,17 @@ To recreate it from scratch:
 
 ### Other deployment notes
 
+**Render's 750-hour allowance counts running instances, not crawl jobs.**
+One continuously running free web service uses 744 hours in a 31-day
+month or 720 in a 30-day month. The October 31 audit confirmed one free
+service and one instance, so keep the existing crawl cadence. Slower
+crawls do not save instance hours while self-ping keeps the service
+awake. Keep `SELF_PING_INTERVAL_SECONDS=600` (10 minutes, now the
+default) to reduce health requests; it does not reduce billed hours.
+Do not disable keep-alive without an external wake/collection plan:
+the in-process scheduler stops while Render sleeps. See the audit for
+usage calculations and the deployment checklist.
+
 45-minute steps are not something an external HTTP trigger (GitHub
 Actions cron, for example) can reliably hold — which is why the
 scheduler moved in-process. Set `SCHEDULER_ENABLED=false` and drive
@@ -277,6 +292,9 @@ Everything has a working default; see `app/config.py` for the full list.
 | `MAX_WORKERS` / `PLAYWRIGHT_MAX_WORKERS` | `8` / `3` | Crawl concurrency |
 | `CRAWL_BATCH_DEADLINE_SECONDS` | `600` | How long a run waits for its sources; overdue ones keep running and still save |
 | `SELF_PING_URL` | (empty) | Keeps a sleeping free-tier instance awake |
+| `SELF_PING_INTERVAL_SECONDS` | `600` | Keep-alive interval; keep below Render's 15-minute idle window |
+| `NSHARGA_COMPANY_ID` | NSHMT account | Company document in Naiman Sharga's `currency_rates_new` collection |
+| `ARIGBANK_PROXY_URL` | (empty) | Optional proxy for ArigBank sign-in and rates only |
 | `CORS_ORIGINS`, `RATE_LIMIT_*` | — | Public API safeguards |
 | `INTL_CRAWLS_PER_DAY` / `INTL_DAILY_CALL_LIMIT` | `4` / `4` | International fetches per day, and the hard per-source ceiling |
 | `FXRATESAPI_KEY` | (empty) | fxRatesAPI key (secret). Empty disables that source |
@@ -286,6 +304,14 @@ Everything has a working default; see `app/config.py` for the full list.
 
 Rate limiting and the admin job lock are in-process, so they are only
 correct with a single Uvicorn process (no `--workers`).
+
+For the October 26 upstream crawler fixes, remove any old
+`NSHARGA_FIRESTORE_BASE_URL` override so the new collection default is
+used, and remove an old `TRANSBANK_URI` override to use the homepage.
+Naiman Sharga needs no new private key or database migration. ArigBank
+was failing in the live feed on October 31; if it remains unreachable
+from Render, configure `ARIGBANK_PROXY_URL` with a trusted proxy that
+can reach the bank. No working proxy is provisioned by this project.
 
 ## Development
 

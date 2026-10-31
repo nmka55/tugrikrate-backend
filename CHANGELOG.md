@@ -4,6 +4,27 @@
 
 ## [Unreleased]
 
+### Upstream maintenance and Render audit (2026-10-31)
+
+- Ported relevant upstream v1.1.1 fixes (release `6cde736`, October 26):
+  Naiman Sharga's `currency_rates_new/<date>/companies/<id>` document,
+  TransBank's homepage and attached JSON script, and optional
+  `ARIGBANK_PROXY_URL` for only that bank's sign-in/rate requests.
+  Preserved exact decimals, channel rules and publication-date lookback.
+- Fixed non-ASCII `X-Admin-Key` returning 500 instead of 401; the same
+  fix covers `X-App-Key`, withholding restricted data on a wrong key.
+- Updated Black to 26.10.1 and httpx2 to 2.16.0; development tools now
+  live in `requirements-dev.txt`, installed by CI and Docker's test stage.
+- Docker/Compose health checks now fail on HTTP errors; local virtual
+  environments and tool caches are excluded from the Docker context.
+- Collector concurrency tests use isolated database connections, fixing a
+  race in the old shared-connection test fixture. 381 tests pass.
+- Self-ping defaults to 600 seconds instead of 30 (95% fewer requests).
+  Bank/FX cadence is unchanged: one free Render instance fits 750 hours
+  even in a 31-day month (744 hours). Keep Render support and runtime
+  httpx, which this fork still uses. Deployment/configuration checklist:
+  `docs/maintenance-2026-10-31.md`.
+
 ### Schedule (2026-10-20)
 
 - Changed: bank cadence is tied to working hours 09:00-18:00

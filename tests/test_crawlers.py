@@ -15,6 +15,7 @@ import json
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
+import pytest
 import requests
 
 from app.crawlers import (
@@ -130,6 +131,34 @@ class TestXacBank:
 
 
 class TestArigBank:
+    @pytest.mark.parametrize("proxy", ["", " http://proxy.example:3128 "])
+    @patch("app.crawlers.arigbank.BaseCrawler.post")
+    def test_proxy_covers_token_refresh_and_rates_only_for_arigbank(
+        self, mock_post, monkeypatch, proxy
+    ):
+        from app.config import config
+
+        monkeypatch.setattr(config, "ARIGBANK_PROXY_URL", proxy, raising=False)
+        monkeypatch.setattr(config, "ARIGBANK_BEARER_TOKEN", "expired")
+        mock_post.side_effect = [
+            mock_response({"status": 401, "message": "expired"}, 401),
+            mock_response({"token": "fresh"}),
+            mock_response(
+                {"data": [{"curCode": "USD", "belenBuyRate": 3590}]}
+            ),
+        ]
+        crawler = ArigBank(TODAY)
+        rates = crawler.crawl()
+        assert rates["usd"].cash.buy == Decimal("3590")
+        expected = (
+            {"http": proxy.strip(), "https": proxy.strip()} if proxy else None
+        )
+        assert len(mock_post.call_args_list) == 3
+        for call in mock_post.call_args_list:
+            assert call.kwargs["proxies"] == expected
+        assert crawler.session.proxies == {}
+        assert KhanBank(TODAY).session.proxies == {}
+
     @patch("app.crawlers.arigbank.config")
     @patch("app.crawlers.arigbank.BaseCrawler.post")
     def test_belen_maps_to_cash_and_belen_bus_to_noncash(
@@ -442,6 +471,35 @@ class TestMBank:
 
 
 class TestNaimanSharga:
+    @patch("app.crawlers.naimansharga.BaseCrawler.get")
+    def test_company_document_url_keeps_query_and_lookback_date(
+        self, mock_get, monkeypatch
+    ):
+        from app.config import config
+
+        monkeypatch.setattr(
+            config,
+            "NSHARGA_FIRESTORE_BASE_URL",
+            "https://firestore.example/documents/currency_rates_new/?key=test",
+        )
+        monkeypatch.setattr(
+            config, "NSHARGA_COMPANY_ID", "company-1", raising=False
+        )
+        mock_get.side_effect = [
+            mock_response({}, status_code=404),
+            mock_response(self._document()),
+        ]
+        crawler = NaimanSharga("2026-10-31")
+        rates = crawler.crawl()
+        assert [call.args[0] for call in mock_get.call_args_list] == [
+            "https://firestore.example/documents/currency_rates_new/"
+            f"{day}/companies/company-1?key=test"
+            for day in ("2026-10-31", "2026-10-30")
+        ]
+        assert crawler.published_date == datetime.date(2026, 10, 30)
+        assert rates["usd"].cash.buy == Decimal("3611")
+        assert rates["usd"].noncash.buy is None
+
     def _document(self, buy="3611", sell="3615"):
         return {
             "fields": {
@@ -489,6 +547,43 @@ class TestNaimanSharga:
 
 
 class TestTransBank:
+    def test_homepage_can_publish_rates_without_a_visible_table(self):
+        page = MagicMock()
+        script = page.locator.return_value.first
+        script.count.return_value = 1
+        script.inner_text.return_value = json.dumps(
+            {
+                "props": {
+                    "pageProps": {
+                        "rateData": {
+                            "2026-10-30": {
+                                "USD": {
+                                    "2": {
+                                        "BUY_RATE": "3620",
+                                        "SELL_RATE": "3590",
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        )
+
+        def wait_for_rates(selector, **kwargs):
+            if "script#__NEXT_DATA__" not in selector:
+                raise TimeoutError("Homepage has no table")
+            if kwargs.get("state") != "attached":
+                raise TimeoutError("JSON script is not visible")
+
+        page.wait_for_selector.side_effect = wait_for_rates
+        crawler = TransBank("2026-10-31")
+        rates = crawler._crawl_page(page)
+        assert rates["usd"].cash.buy == Decimal("3590")
+        assert rates["usd"].cash.sell == Decimal("3620")
+        assert crawler.published_date == datetime.date(2026, 10, 30)
+        assert crawler.raw_payload
+
     def test_customer_perspective_sides_are_swapped(self):
         """TransBank publishes BUY_RATE as what the customer pays.
         Taken literally it made TransBank look like the best buy rate

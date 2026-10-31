@@ -18,6 +18,11 @@
 #     are conservative.
 #   - The instance sleeps after 15 minutes without inbound traffic,
 #     stopping the scheduler; SELF_PING_URL keeps it awake.
+#     One instance runs at most 744 h in a 31-day month, within the
+#     workspace's 750 h allowance. Crawl frequency does not change this.
+#     Current code defaults SELF_PING_INTERVAL_SECONDS to 600 (10 min);
+#     remove an old 30-second override to use it. This saves requests,
+#     not instance hours. Audit: docs/maintenance-2026-10-31.md.
 #   - No persistent disk: the database is external (Neon free Postgres,
 #     AWS Singapore), passed in as DATABASE_URL.
 #
@@ -47,6 +52,11 @@ services:
       # fresh when unset, so leaving it blank forever is fine.
       - key: ARIGBANK_BEARER_TOKEN
         sync: false
+      # If ArigBank remains unreachable, set ARIGBANK_PROXY_URL to a
+      # trusted proxy in the dashboard. No proxy is provisioned here.
+      # Remove old TRANSBANK_URI and NSHARGA_FIRESTORE_BASE_URL overrides
+      # to use the patched homepage/new collection defaults. No new key
+      # or schema migration is needed for Naiman Sharga.
       # Free tier is 512MB / 0.1 CPU. app/config.py's defaults assume
       # more headroom than that.
       - key: MAX_WORKERS
