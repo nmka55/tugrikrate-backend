@@ -57,3 +57,22 @@ class TestSpecShape:
         quote = self.spec()["components"]["schemas"]["QuoteOut"]["properties"]
         assert quote["rate"]["type"] == "string"
         assert quote["unit_basis"]["type"] == "string"
+
+    def test_auth_operations_resolve_to_the_correct_header(self):
+        from app.api.api import app
+
+        spec = app.openapi()
+        schemes = spec["components"]["securitySchemes"]
+        for path, method, header in (
+            ("/v1/fx", "get", "X-App-Key"),
+            ("/api/admin/status", "get", "X-Admin-Key"),
+            ("/api/admin/crawl", "post", "X-Admin-Key"),
+            ("/api/admin/crawl/{source_id}", "post", "X-Admin-Key"),
+        ):
+            requirements = spec["paths"][path][method]["security"]
+            assert len(requirements) == 1
+            assert len(requirements[0]) == 1
+            scheme = schemes[next(iter(requirements[0]))]
+            assert scheme["type"] == "apiKey"
+            assert scheme["in"] == "header"
+            assert scheme["name"] == header

@@ -2,10 +2,13 @@
 
 ## Resume here
 
-**Release in progress.** The owner explicitly authorized Git push, deployment,
-and live verification on October 31, then requested that today's decisions
-and outcomes be reflected in the project documentation. The implementation
-is complete; follow the release checklist below and update each result.
+**Verification follow-up in progress.** Maintenance commit `e735b79` is
+pushed and live; GitHub CI, including Docker tests, passed. The live public
+API passed 46 checks and Naiman Sharga recovered. Verification found an
+OpenAPI app/admin security-scheme collision, now fixed locally with a
+regression check. Finish the follow-up deployment and authenticated checks,
+then record the dashboard configuration/billing evidence below. The owner
+authorized push, deployment, live verification and documentation updates.
 
 User request: read the project documentation, analyze recent upstream changes
 and adopt needed fixes, explain deployment configuration, and assess the Render
@@ -239,9 +242,9 @@ repo at `/private/tmp/tugrikrate-runtime-audit-20261031`.
 
 ## Authorized release checklist — October 31
 
-- [ ] Commit reviewed code/docs and push to main without rewriting history.
-- [ ] Confirm GitHub CI including Docker tests succeeds for that commit.
-- [ ] Confirm that exact commit reaches Render `live`.
+- [x] Commit reviewed code/docs and push to main without rewriting history.
+- [x] Confirm GitHub CI including Docker tests succeeds for that commit.
+- [x] Confirm that exact commit reaches Render `live`.
 - [ ] Verify health, schema, rates, FX restrictions, filters, caching, history,
       logos and admin protection; verify post-deploy crawler results.
 - [ ] Record actual outcomes, remaining bank issues and configuration actions
@@ -251,3 +254,67 @@ Release policy: the same service, plan, database and crawl cadence remain in
 use. No new proxy purchase, secret rotation or extra international crawl is
 implied by deployment verification. ArigBank connectivity may remain an
 external dependency; report its real state instead of claiming all banks work.
+
+## Release evidence — October 31
+
+- Maintenance commit: `e735b7972839714cb91d517363fbebfcd667e1e0`.
+- [GitHub CI run 41164395439](https://github.com/nmka55/tugrikrate-backend/actions/runs/41164395439):
+  Lint & Test, Docker Test and Publish Docker Image succeeded; Create
+  Release skipped as expected for a branch push.
+- Render deploy `dep-dbim25dg1s2s73f5r3i0` became live at
+  **03:33:47 UTC / 12:33:47 Seoul**. One free Singapore instance, previews
+  off, `checksPass` auto-deploy and `/api/health` unchanged.
+- Public API probe at 11:40 UTC: **46/46 assertions passed**. Health is
+  200, version 2.0.0; live OpenAPI matched the committed schema; 15 MNT
+  sources and 17 registry entries; positive decimal-string rates and
+  units; correct channels; UTC timestamps; source/currency filters;
+  ETags with empty 304 responses; bounded history and invalid-limit 422;
+  restricted/unknown history 404; all 16 hosted logos load.
+- Public FX contains only Frankfurter (164 rates), never MNT or
+  fxRatesAPI. Missing/wrong/non-ASCII app keys withhold restricted data;
+  missing/wrong/non-ASCII admin keys return 401. Public FX is cached
+  with `Vary: X-App-Key, Origin, Accept-Encoding`. The initial probe
+  incorrectly required an exact one-item Vary value; a focused recheck
+  confirmed list membership and passed. No server change was needed.
+- Bank status at that probe: **12 ok, 2 stale, 1 failing**. Naiman
+  Sharga's first post-deploy recovery was 04:01:32 UTC, 44 quotes;
+  last checked 10:00:51 UTC. TransBank: 32 quotes, checked 10:02:15 UTC.
+  XacBank/CKBank last checked October 31 but publish October 30 rates
+  (`2026-10-29T16:00:00Z`, midnight Ulaanbaatar), so stale is accurate.
+  ArigBank retains 40 quotes, last success October 21, with continuing
+  sign-in connection timeouts. It needs a trusted reachable proxy.
+- Scheduled fxRatesAPI crawls succeeded at 04:00 and 10:00 UTC (154
+  quotes). No manual international crawl was triggered. The scheduler
+  logged its four-calls-per-day budget at startup.
+- No post-deploy failure/restart/suspension events were returned.
+  Recent sampled memory was 214–236 MiB out of 512 MiB. The connector
+  returned no HTTP latency or instance-count series; service metadata
+  confirms one instance. These samples do not establish peak usage.
+- Dashboard environment names inspected: ten existing variables, no
+  Naiman Sharga, TransBank, self-ping interval, cadence or proxy overrides;
+  no linked environment groups or secret files. Code defaults therefore
+  provide the corrected URLs, cadence and 600-second self-ping interval.
+
+### Verification-discovered correction
+
+Swagger at `/` exposed only `APIKeyHeader: X-Admin-Key` for both admin
+and FX endpoints. Both dependencies had FastAPI's default scheme name,
+so one overwrote the other in OpenAPI. Explicit `AppKey` and `AdminKey`
+names correct Swagger/generated-client authentication without changing
+runtime auth, public response fields or schema version. Updated
+`docs/openapi.json`, the mobile integration prompt and architecture log.
+The new regression check first failed with `X-Admin-Key != X-App-Key`.
+
+- [ ] Validate and deploy this small OpenAPI correction.
+- [ ] Verify authenticated app/admin reads and private FX caching.
+- [x] Read current Render Billing total and finish configuration evidence.
+
+Dashboard read at approximately 11:44 UTC / 20:44 Seoul: **708.23 of
+750 free instance hours**, leaving **41.77 hours**. It lists one service;
+bandwidth 416 MB/5 GB, pipeline minutes 3/500, and projected October
+charges $0.00. These are displayed usage totals, not a promise of final
+billing. No cadence reduction or plan change is needed for this release.
+
+OpenAPI follow-up validation: isort, Black, Ruff, **382 tests**, pip check
+and whitespace checks passed. The one added test detects header mapping
+collisions; the earlier 381-test result describes the maintenance commit.

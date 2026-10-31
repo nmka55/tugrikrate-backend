@@ -1044,3 +1044,23 @@ project log. Release tracking is in the audit's authorized-release checklist.
 Use the existing main-branch after-CI auto-deploy; retain one free instance,
 Neon, all source/auth invariants and the current crawl cadence. Verify the
 specific deployed commit and API behavior before declaring completion.
+
+**October 31 release verification.** Maintenance commit `e735b79` reached
+Render `live` at 03:33:47 UTC (12:33:47 Seoul), deploy
+`dep-dbim25dg1s2s73f5r3i0`, after [CI run 41164395439](https://github.com/nmka55/tugrikrate-backend/actions/runs/41164395439)
+passed lint/tests, Docker tests and image publication. At 11:40 UTC,
+46 read-only checks passed for health, schema, Decimal-string payloads,
+filters, history, ETags/304, public FX restrictions, non-ASCII auth
+rejection and all 16 logos. Naiman Sharga recovered (44 quotes), and
+TransBank had a successful check after deployment. ArigBank still timed
+out; XacBank and Chinggis Khaan Bank were correctly marked stale for
+October 30 publication dates despite successful October 31 checks.
+
+The same verification found a documentation bug: two `APIKeyHeader`
+dependencies shared FastAPI's default scheme name, so the admin header
+overwrote the app header in OpenAPI. Explicit `AppKey` and `AdminKey`
+scheme names now map FX and admin operations to their own headers.
+The new regression check failed on the deployed schema before the fix.
+This changes API documentation and generated-client auth metadata only;
+the existing runtime gates, response schema version and crawl cadence
+remain unchanged. Follow-up deployment results are tracked in the audit.

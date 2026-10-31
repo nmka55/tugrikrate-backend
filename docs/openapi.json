@@ -149,7 +149,7 @@
         "operationId": "get_fx_v1_fx_get",
         "security": [
           {
-            "APIKeyHeader": []
+            "AppKey": []
           }
         ],
         "parameters": [
@@ -331,7 +331,7 @@
         },
         "security": [
           {
-            "APIKeyHeader": []
+            "AdminKey": []
           }
         ]
       }
@@ -346,7 +346,7 @@
         "operationId": "start_single_source_crawl_api_admin_crawl__source_id__post",
         "security": [
           {
-            "APIKeyHeader": []
+            "AdminKey": []
           }
         ],
         "parameters": [
@@ -400,7 +400,7 @@
         },
         "security": [
           {
-            "APIKeyHeader": []
+            "AdminKey": []
           }
         ]
       }
@@ -1098,7 +1098,13 @@
       }
     },
     "securitySchemes": {
-      "APIKeyHeader": {
+      "AppKey": {
+        "type": "apiKey",
+        "description": "Identifies the TugrikRate iOS app. Optional: without it the response omits sources whose licence restricts them to our own app.",
+        "in": "header",
+        "name": "X-App-Key"
+      },
+      "AdminKey": {
         "type": "apiKey",
         "in": "header",
         "name": "X-Admin-Key"

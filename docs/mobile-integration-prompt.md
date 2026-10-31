@@ -305,6 +305,12 @@ bumps its version. In the schema every field is required; nullable ones
 `string | null` - a missing quote is absent from the `quotes` array, not
 a null field.
 
+OpenAPI names the app authentication scheme `AppKey` (`X-App-Key`) and
+the administrative scheme `AdminKey` (`X-Admin-Key`). The app uses only
+`AppKey` for `/v1/fx`; never include an admin key in the app. These names
+were separated on October 31 to fix Swagger selecting the admin header
+for FX requests. The response contract and header names are unchanged.
+
 ## Caching — please implement this
 
 `GET /v1/rates` returns an `ETag`. Send it back as `If-None-Match` and

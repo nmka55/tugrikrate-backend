@@ -12,9 +12,12 @@ from app.sources.registry import SPECS
 SOURCE_IDS = [spec.id for spec in SPECS]
 SourceId = Enum("SourceId", {spec.id: spec.id for spec in SPECS})
 
-_admin_key_header = APIKeyHeader(name="X-Admin-Key", auto_error=False)
+_admin_key_header = APIKeyHeader(
+    name="X-Admin-Key", scheme_name="AdminKey", auto_error=False
+)
 _app_key_header = APIKeyHeader(
     name="X-App-Key",
+    scheme_name="AppKey",
     auto_error=False,
     description=(
         "Identifies the TugrikRate iOS app. Optional: without it the "

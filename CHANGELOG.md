@@ -6,6 +6,15 @@
 
 ### Upstream maintenance and Render audit (2026-10-31)
 
+- Released maintenance commit `e735b79` to the existing Render service;
+  GitHub CI, Docker tests and image publication passed. Naiman Sharga
+  recovered with 44 quotes; TransBank remains healthy. ArigBank still
+  times out, retaining its last good rates with a failing status.
+- Live verification found an OpenAPI auth-scheme collision: both header
+  dependencies defaulted to `APIKeyHeader`, causing Swagger to send
+  `X-Admin-Key` for `/v1/fx`. Named the schemes `AppKey` and `AdminKey`,
+  regenerated the schema and added a regression check. Runtime auth,
+  header names and the JSON response contract are unchanged.
 - Ported relevant upstream v1.1.1 fixes (release `6cde736`, October 26):
   Naiman Sharga's `currency_rates_new/<date>/companies/<id>` document,
   TransBank's homepage and attached JSON script, and optional
