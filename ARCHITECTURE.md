@@ -1029,14 +1029,16 @@ gives deploys, logs and env vars; from a sandbox that blocks port 5432,
 Neon is reachable through `POST https://<host>/sql` with the
 `Neon-Connection-String` header.
 
-**Applying the October 31 fixes.** Deploy the reviewed code after CI
-passes. Remove old `NSHARGA_FIRESTORE_BASE_URL` and `TRANSBANK_URI`
-overrides to use the new defaults, or explicitly set the values in the
-[audit checklist](docs/maintenance-2026-10-31.md). Naiman Sharga needs
-no new private key or database migration. Check ArigBank logs and
-configure a trusted per-bank proxy only if connectivity still fails.
-The connected Render tools have no read-only environment or billing
-endpoint, so the current override values were not inspected or changed.
+**October 31 configuration verified.** The dashboard has no old
+`NSHARGA_FIRESTORE_BASE_URL`, `TRANSBANK_URI`, self-ping interval or
+cadence overrides. The deployed code defaults apply; Naiman Sharga
+recovered without a new key or migration. Verified `MAX_WORKERS=4`,
+`PLAYWRIGHT_MAX_WORKERS=1`, `REQUIRE_APP_KEY=true`,
+`TRUST_PROXY_HEADERS=true`, and correct HTTPS public/self-ping URLs.
+No environment values were changed. ArigBank still needs a trusted
+reachable per-bank proxy. Billing showed 708.23/750 free hours at
+20:44 Seoul, leaving 41.77; the current cadence remains appropriate.
+See the [audit](docs/maintenance-2026-10-31.md) for evidence and caveats.
 
 **October 31 release authorization.** The owner subsequently requested Git
 push, deployment and live verification, with the results recorded in the
@@ -1064,3 +1066,17 @@ The new regression check failed on the deployed schema before the fix.
 This changes API documentation and generated-client auth metadata only;
 the existing runtime gates, response schema version and crawl cadence
 remain unchanged. Follow-up deployment results are tracked in the audit.
+
+**November 1 final check.** Follow-up `89ed0f6` passed CI (including Docker)
+and reached Render live October 31 at 11:48:42 UTC / 20:48:42 Seoul.
+All 382 local tests and the repeated 46 live public API checks passed;
+the live OpenAPI now matches the corrected schemes. Naiman Sharga and
+TransBank both have November 1 rates. The feed reports 12 ok, CKBank
+stale, and ArigBank/XacBank failing, with last-good quotes preserved.
+XacBank's API returns no records for November 1 or October 31 but 12 for
+October 30; its unchanged today/yesterday fallback misses that weekend
+gap. ArigBank still has sign-in connection timeouts. These issues are
+not concealed by the successful health response. Valid-key live FX/admin
+checks remain unverified because browser control failed repeatedly;
+their local tests and live invalid-key rejection checks pass. Exact
+evidence, limitations and follow-ups are in the maintenance audit.

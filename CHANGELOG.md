@@ -15,6 +15,12 @@
   `X-Admin-Key` for `/v1/fx`. Named the schemes `AppKey` and `AdminKey`,
   regenerated the schema and added a regression check. Runtime auth,
   header names and the JSON response contract are unchanged.
+- Follow-up `89ed0f6` passed CI/Docker and deployed October 31 at
+  20:48 Seoul. November 1 verification: 382 tests and 46 public API
+  checks pass. XacBank has no October 31/November 1 publications within
+  its one-day fallback; it retains previous quotes with a failure flag.
+  CKBank remains stale and ArigBank unreachable. Valid-key live checks
+  are unverified after browser-control timeouts; see the maintenance log.
 - Ported relevant upstream v1.1.1 fixes (release `6cde736`, October 26):
   Naiman Sharga's `currency_rates_new/<date>/companies/<id>` document,
   TransBank's homepage and attached JSON script, and optional

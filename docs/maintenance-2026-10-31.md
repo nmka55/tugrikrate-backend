@@ -2,13 +2,14 @@
 
 ## Resume here
 
-**Verification follow-up in progress.** Maintenance commit `e735b79` is
-pushed and live; GitHub CI, including Docker tests, passed. The live public
-API passed 46 checks and Naiman Sharga recovered. Verification found an
-OpenAPI app/admin security-scheme collision, now fixed locally with a
-regression check. Finish the follow-up deployment and authenticated checks,
-then record the dashboard configuration/billing evidence below. The owner
-authorized push, deployment, live verification and documentation updates.
+**Deployed and publicly verified; final check November 1.** Maintenance
+commit `e735b79` and OpenAPI follow-up `89ed0f6` are pushed; `89ed0f6` is
+live. Both CI runs passed, including Docker tests. All 382 local tests and
+46 live public API checks pass. Naiman Sharga recovered. Remaining limits:
+ArigBank still times out; XacBank's one-day fallback cannot find weekend
+publications; valid-key live checks could not finish because browser
+control repeatedly timed out. See the final verification section below.
+The owner authorized push, deployment, verification and documentation.
 
 User request: read the project documentation, analyze recent upstream changes
 and adopt needed fixes, explain deployment configuration, and assess the Render
@@ -37,7 +38,7 @@ Do not confuse local changes to `render.yaml` with live configuration changes.
 - [x] Add regression coverage for behavior changes.
 - [x] Update architecture/configuration/deployment documentation.
 - [x] Run isort, Black, Ruff, full pytest and applicable build checks (Docker
-      unavailable; production-only startup smoke test passed).
+      passed in GitHub CI; production-only startup smoke test passed).
 - [x] Record final outcomes, deployment steps and remaining external actions.
 
 ## Confirmed constraints
@@ -49,8 +50,8 @@ Do not confuse local changes to `render.yaml` with live configuration changes.
 - No commits, push or live deployment performed as part of the initial audit.
 - User supplied the warning received four days ago: 619 of 750 hours used,
   reset at next calendar month, listing only this service.
-- Render connection confirmed one free service / one instance, previews off,
-  not suspended; deployed commit `09b22cab88b1893d449bc8af6f67f88c904dd59f`.
+- Initial Render connection confirmed one free service / one instance,
+  previews off, not suspended; pre-release deployed commit `09b22cab88b1893d449bc8af6f67f88c904dd59f`.
 
 ## Findings and decisions
 
@@ -96,9 +97,10 @@ GitHub, not Render. Render worker/cron services are paid, not extra free hours.
 | 31 days (October 2026) | 744 h | 6 h |
 
 619 hours = 82.53%; 131 hours remained at the email. The warning is expected
-late in a month and does not itself predict exhaustion. Current billed hours
-are not exposed by the connected tools. Inventory is a present-day snapshot,
-not proof that no other service ever ran earlier in the month.
+late in a month and does not itself predict exhaustion. The connector does not
+expose current billed hours; the subsequent dashboard check showed
+708.23/750 hours (release evidence below). Inventory is a present-day
+snapshot, not proof that no other service ever ran earlier in the month.
 
 Keep the current cadence (every day, Asia/Ulaanbaatar):
 
@@ -114,8 +116,8 @@ foreign source normally makes one request per run: 124/month at most under
 this schedule. Failed crawls and source publication delays can exceed the
 nominal freshness gaps; the API continues serving flagged last-good data.
 
-Deployed code defaults to 30 s: 89,280 requests/31 days. The local update
-defaults to 600 s (10 min): 4,464 requests, 95% fewer, under Render's 15-minute idle
+Before this release, code defaulted to 30 s: 89,280 requests/31 days.
+The deployed update defaults to 600 s (10 min): 4,464 requests, 95% fewer, under Render's 15-minute idle
 window. This saves request overhead, NOT instance hours. Do not simply
 disable keep-alive: a sleeping process cannot run or wake its own scheduler.
 
@@ -139,7 +141,7 @@ guarantee about peak memory. Keep MAX_WORKERS=4, PLAYWRIGHT_MAX_WORKERS=1.
 7. Review diff and record deployment handoff. Subsequently authorized by the
    owner: push, deploy, verify production, and record the actual results.
 
-## Current validation / limitations
+## Initial audit validation / limitations (before release)
 
 - Baseline: 375 tests passed (4.23 s).
 - Final: **381 tests passed (2.56 s)**; isort, Black and Ruff all pass.
@@ -151,7 +153,7 @@ guarantee about peak memory. Keep MAX_WORKERS=4, PLAYWRIGHT_MAX_WORKERS=1.
   installed. OpenAPI matches the committed contract exactly.
 - YAML manifests parsed successfully; required Docker test inputs remain
   included. A real Docker image build was not run because Docker is absent;
-  CI must still run it before deployment. No remote CI run triggered.
+  Docker subsequently passed in GitHub CI; see release evidence below.
 - Final diff reviewed; whitespace check passes with `cr-at-eol` (the existing
   CI and CONTRIBUTING files deliberately retain their original CRLF lines).
 - Local Python: 3.13.16; CI/Docker target: 3.14.
@@ -176,22 +178,25 @@ guarantee about peak memory. Keep MAX_WORKERS=4, PLAYWRIGHT_MAX_WORKERS=1.
   publication Oct 31, USD cash buy 3591 / sell 3621.
 - ArigBank direct sign-in timed out locally; a working proxy has NOT been
   supplied or tested. Optional proxy support alone does not fix reachability.
-- Render logs query returned service-unavailable (503); events and metrics
-  were available. Do not claim to know the exact logged ArigBank exception.
+- Initial Render logs query returned service-unavailable (503); events and
+  metrics were available. Release verification later retrieved logs and
+  confirmed ArigBank sign-in ConnectTimeout failures.
 - Render tools expose services/deploys/events/metrics/logs, but no read-only
   environment-variable or billing-total endpoint. Never use the update tool
   to infer settings.
 
 ## Deployment/configuration handoff
 
-At release start, changes are on `codex/upstream-render-audit`, uncommitted,
-and production runs `09b22ca`. The owner authorized deployment of this work.
-Commit and fast-forward main (remote main verified unchanged), push, and
-let the existing after-CI auto-deploy run. Do not create a second service or
-trigger a duplicate deploy. Preserve existing secrets and provider budgets.
+At release start, the changes were uncommitted on
+`codex/upstream-render-audit` and production ran `09b22ca`. The owner
+authorized deployment; the work was committed and pushed to main as
+`e735b79`, then deployed through the existing after-CI flow. The service,
+secrets and provider budgets were preserved.
 
-Check these settings in the existing Render service's Environment page.
-The plugin cannot read them, so existing overrides are unverified:
+The table records the required configuration. The dashboard was checked
+during verification: no obsolete or patched-URL overrides are present,
+and no configuration changes were necessary. ArigBank proxy access is
+the only remaining external configuration action.
 
 | Setting | Required action / value |
 | --- | --- |
@@ -215,14 +220,15 @@ No new database tables, migration, frontend change, or private provider key
 is needed for the Naiman Sharga/TransBank fixes. Local/CI test setup now uses
 `pip install -r requirements-dev.txt`; production uses `requirements.txt`.
 
-- [ ] Commit/review and deploy to the existing service after CI passes.
-- [ ] Check/remove old environment overrides above (dashboard required).
+- [x] Commit/review and deploy to the existing service after CI passes.
+- [x] Check/remove old environment overrides above (none present).
 - [ ] Supply/test ArigBank proxy if connection still fails after deployment.
-- [ ] Verify `/api/health` and `/v1/rates`; Naiman Sharga should recover at
-      the next JSON slot (or an authenticated single-source admin crawl).
-- [ ] Check current total on Render Billing; current connector lacks totals.
+- [x] Verify `/api/health` and `/v1/rates`; Naiman Sharga recovered at
+      the first scheduled JSON slot after deployment.
+- [x] Check current total on Render Billing: 708.23/750 hours.
 
-These boxes are the future deployment handoff, not claims of completed work.
+ArigBank proxy provisioning requires a trusted endpoint from the owner;
+no proxy was purchased or substituted during this release.
 
 ## Reproduce local verification
 
@@ -245,9 +251,9 @@ repo at `/private/tmp/tugrikrate-runtime-audit-20261031`.
 - [x] Commit reviewed code/docs and push to main without rewriting history.
 - [x] Confirm GitHub CI including Docker tests succeeds for that commit.
 - [x] Confirm that exact commit reaches Render `live`.
-- [ ] Verify health, schema, rates, FX restrictions, filters, caching, history,
+- [x] Verify health, schema, rates, public FX restrictions, filters, caching, history,
       logos and admin protection; verify post-deploy crawler results.
-- [ ] Record actual outcomes, remaining bank issues and configuration actions
+- [x] Record actual outcomes, remaining bank issues and configuration actions
       here and in related architecture/changelog documentation.
 
 Release policy: the same service, plan, database and crawl cadence remain in
@@ -305,8 +311,9 @@ runtime auth, public response fields or schema version. Updated
 `docs/openapi.json`, the mobile integration prompt and architecture log.
 The new regression check first failed with `X-Admin-Key != X-App-Key`.
 
-- [ ] Validate and deploy this small OpenAPI correction.
-- [ ] Verify authenticated app/admin reads and private FX caching.
+- [x] Validate and deploy this small OpenAPI correction.
+- [ ] Verify authenticated app/admin reads and private FX caching live
+      (browser-control timeout; local regression coverage passes).
 - [x] Read current Render Billing total and finish configuration evidence.
 
 Dashboard read at approximately 11:44 UTC / 20:44 Seoul: **708.23 of
@@ -318,3 +325,51 @@ billing. No cadence reduction or plan change is needed for this release.
 OpenAPI follow-up validation: isort, Black, Ruff, **382 tests**, pip check
 and whitespace checks passed. The one added test detects header mapping
 collisions; the earlier 381-test result describes the maintenance commit.
+
+## Final verification — November 1
+
+- Follow-up commit `89ed0f699036a4c73ddd3ea9bbfd8ea97a544a85`:
+  [CI run 41198094528](https://github.com/nmka55/tugrikrate-backend/actions/runs/41198094528)
+  passed Lint & Test, Docker Test and Publish Docker Image. Render deploy
+  `dep-dbitamfavr4c73befqv0` became live **October 31 at 11:48:42 UTC /
+  20:48:42 Seoul**. Auto-deploy remains after-CI; no duplicate deploy,
+  service, paid plan, new proxy or manual provider crawl was introduced.
+- Repeated public probe **November 1 at 04:59 UTC / 13:59 Seoul**:
+  **46/46 passed**, including the updated live OpenAPI matching Git.
+  `AppKey` maps to `X-App-Key`; `AdminKey` maps to `X-Admin-Key`.
+  Health, database-backed rates, schema, filters, history, cache headers,
+  ETags/304, logos and invalid/non-ASCII authentication all passed again.
+- Current source status: **12 ok, 1 stale, 2 failing**. Naiman Sharga
+  has 44 November 1 quotes, checked at 04:45:57 UTC; TransBank has 32
+  November 1 quotes, checked at 04:01:48 UTC. Frankfurter is healthy with
+  164 rates. Chinggis Khaan Bank still publishes October 30 rates and
+  is stale despite a successful November 1 check.
+- ArigBank remains failing with sign-in `ConnectTimeout`; no trusted
+  proxy is configured. The existing 40 quotes remain available.
+- XacBank now reports failing with eight consecutive empty crawls.
+  Direct read-only date queries all returned HTTP 200: November 1 and
+  October 31 each had zero records; October 30 had 12 records dated
+  `2026-10-30T00:00:00.000Z`. Its unchanged crawler checks only today
+  and yesterday, so the weekend publication gap is outside that window.
+  The feed preserves its previous 44 quotes. A longer bounded lookback
+  can be evaluated separately while preserving the true publication date;
+  no unsupported newer rates or publication dates were fabricated.
+- No service failure/restart/suspension events were returned after the
+  follow-up deployment. Current crawler failures above are separate from
+  the health of the web process.
+- Dashboard values verified October 31: `MAX_WORKERS=4`,
+  `PLAYWRIGHT_MAX_WORKERS=1`, `REQUIRE_APP_KEY=true`,
+  `TRUST_PROXY_HEADERS=true`, and the correct HTTPS `PUBLIC_BASE_URL`
+  and `SELF_PING_URL`. No environment values were changed. The 708.23 h
+  billing observation above belongs to October, not November's usage.
+- **Verification limit:** no app/admin keys were available in local
+  environment files or process variables. The November 1 attempt to
+  finish authenticated reads in Safari failed repeatedly with computer
+  control error `-10005: timeoutReached`, including after a session reset.
+  Valid-key `/v1/fx`, private caching and admin status are covered by local
+  tests but are **not claimed as live-verified**. Public denial behavior
+  and scheduled fxRatesAPI ingestion were verified independently.
+- Final documentation changes use `[skip render]` in their commit message
+  to retain the verified runtime commit and avoid another scheduler
+  restart. This applies only to the log/docs follow-up; the code correction
+  above was deployed normally. [Render skip-phrase documentation](https://render.com/docs/deploys#skipping-an-auto-deploy).
