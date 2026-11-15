@@ -142,11 +142,11 @@ Consequences for the backend:
                 │
                 ▼
       app/sources/payload.py
-      canonical bytes → payload_hash
+      canonical bytes → payload_hash (recorded)
                 │
                 ▼
       app/db/snapshots.py
-      hash changed? INSERT : bump last_checked_at
+      quotes changed? INSERT : bump last_checked_at
                 │
                 ▼
       app/api/routers/v1.py
@@ -160,12 +160,13 @@ Consequences for the backend:
 | `app/crawlers/` | Fetch and parse one bank. Upstream-shaped; keep mergeable. |
 | `app/sources/registry.py` | **Single source of truth** for what each source publishes, plus the evidence for every claim. |
 | `app/sources/adapter.py` | Crawler output → `Quote` objects. Where invariant 2 is enforced. |
-| `app/sources/payload.py` | Canonical payload bytes and the change-detection hash. |
+| `app/sources/payload.py` | Canonical payload bytes and the hash recorded on each snapshot (provenance; change detection compares quotes). |
 | `app/sources/models.py` | `Quote`, `CrawlResult`, channel/side constants. |
 | `app/services/collector.py` | Runs crawls, persists, isolates failures. |
 | `app/services/scheduler.py` | Cron triggers per cadence class and source group. |
 | `app/services/freshness.py` | Interval + `ok`/`stale`/`failing` rules, shared by scheduler and API so they cannot drift. |
-| `app/db/snapshots.py` | Insert-on-change, bump-on-no-change, failure state. |
+| `app/db/snapshots.py` | Insert-on-change (quotes), bump-on-no-change, latest-per-source query, pruning, failure state. |
+| `app/services/retention.py` | The daily prune job behind `SNAPSHOT_RETENTION_DAYS` (off by default). |
 | `app/models/snapshot.py` | `sources`, `rate_snapshots`, `source_state` schema. |
 | `app/api/routers/v1.py` | The public contract. Treat as frozen. |
 | `app/utils/decimals.py` | Locale-independent exact parsing. |
@@ -181,7 +182,8 @@ Consequences for the backend:
   meaning if a source is later retired from code.
 - **`rate_snapshots`** — `source_id`, `fetched_at`, `published_at`
   (nullable), `last_checked_at`, `payload_hash`, `quotes` (JSON). One
-  row per *distinct* payload.
+  row per *distinct set of quotes*; `payload_hash` is the payload they
+  were first seen in.
 - **`source_state`** — failure streak, last error, last success. Kept
   off the snapshot table deliberately: a failing crawl must not
   disturb the last good snapshot.
@@ -624,6 +626,83 @@ sorted keys, with each source's declared `volatile_keys` stripped at
 any depth. Playwright crawlers `record_payload()` only the extracted
 rate rows, never the page.
 
+Since 2026-11-15 the hash no longer *decides* anything - see the next
+section. It is still computed this way and stored on every new row.
+
+### Why a snapshot is written when the quotes change, not the hash
+
+Canonicalising the payload was not enough. A production audit on
+2026-11-15, read through the public history endpoints, found that at
+least **998 of 1,937** snapshots had quotes byte-identical to the
+snapshot before them: Golomt 431 of 499, Bank of Mongolia 309 of 340,
+TransBank 48, TDBM 47, Naiman Sharga 38, State Bank 33, Bogd 32,
+Capitron 23, Arig 21. (Golomt was capped by the endpoint's 500 limit
+and fxRatesAPI has no history endpoint, so the true figures are higher.)
+
+The cause is structural, not a missing `volatile_keys` entry: a payload
+carries fields the feed never publishes, and those move on their own.
+Golomt's response has `tvalue`, `cvalue_diff`, `*_status` and a
+`mongolbank` block beside each published `cvalue`; the Bogd and CK
+tables include the Bank of Mongolia reference column; TransBank's
+`rateData` includes rtypecode 1 and is keyed by date. The Bank of
+Mongolia's hash alternated between two values for the same quotes
+within one day; why was not identified. Chasing each such field with
+another `volatile_keys` entry is a list that can only ever be behind.
+
+So `record_success` compares what is actually served: the serialised
+quotes of the new crawl against the latest snapshot's `quotes`. Equal
+means bump `last_checked_at` (and `published_at` if the source restated
+it); different means insert. Two consequences:
+
+- The history endpoint's promise - one entry per actual change - now
+  holds by construction rather than by keeping a list complete.
+- A corrected mapping reaches the feed on the next crawl. Under hash
+  comparison a deploy that changed the quotes a payload yields (the
+  TransBank side swap, for instance) was invisible until the bank's
+  payload next changed.
+
+`payload_hash` stays on the row as provenance - the payload those
+quotes were first seen in - and is not updated on a bump. Rows written
+before this change are left as they are: the duplicates already stored
+were **not** removed, which would be a destructive edit of production
+history and is the owner's call.
+
+### Why the feed asks for one row per source
+
+`latest_snapshots` used to `SELECT` the whole table ordered by time and
+keep the last row per source in Python. Both `/v1/rates` and `/v1/fx`
+call it, so every request downloaded the full history from Neon. On
+2026-11-15 that was >= 1,937 rows and >= 12.6 MB of quotes JSON;
+`/v1/rates` took 2.6-3.6 s in production while `/api/health` and
+`history?limit=1` (also a database read) took 0.25 s. Neon's free plan
+includes 5 GB of egress per project per month and suspends compute when
+it is spent (neon.com/pricing, read 2026-11-15), which at ~13 MB a
+request is about 400 feed requests. The cost also grew with every
+snapshot ever written, and the duplicates above doubled it.
+
+It is now one statement: `row_number()` partitioned by `source_id`,
+ordered `fetched_at DESC, id DESC` (the same order as
+`latest_snapshot`), joined back for rank 1. A window function rather
+than Postgres's `DISTINCT ON` so the identical statement runs on SQLite
+in tests. Replaying the 1,937 production rows locally, old and new
+return the same row for all 16 visible sources, in 110 ms against
+1.8 ms (a laptop, SQLite - not a production measurement).
+
+### Why retention is a scheduled job, and off by default
+
+`SNAPSHOT_RETENTION_DAYS` was documented in the README and
+`.env.example` but read by nothing, and `prune_snapshots` had no caller
+and no test - the table could only grow. `app/services/retention.py`
+now runs it daily at 03:30 local (clear of every crawl slot) when the
+setting is above zero. In a `fast`/`slow` split only the non-`slow`
+process registers the job, because the prune covers every source's rows
+and must have exactly one owner. It is a single `DELETE`, always
+sparing the newest snapshot of each source so a quiet source never
+vanishes from the feed. With `SCHEDULER_ENABLED=false` nothing prunes.
+
+The default stays `0` (keep everything) and production does not set it:
+how much history to keep is the owner's decision.
+
 ### Why rates are stored as strings, not NUMERIC
 
 SQLite has no exact numeric type; SQLAlchemy routes `Numeric` through
@@ -943,6 +1022,27 @@ upstream `6cde736` (October 26) against common ancestor `73b1db8`.
   a 31-day month: **744 hours**, leaving six. Keep the bank/FX cadence.
   Self-ping now defaults to **600 seconds** rather than 30, reducing
   requests by 95%; this does not change running-instance hours.
+**2026-11-15 — feed query, change detection, retention.**
+
+Found by a read-only audit of the code against production (public
+endpoints only; no production data was written). Rationale and evidence
+are in §5: "Why a snapshot is written when the quotes change", "Why the
+feed asks for one row per source" and "Why retention is a scheduled
+job".
+
+- `latest_snapshots` returns one row per source from a single ranked
+  query instead of reading the whole table per request.
+- `record_success` inserts when the serialised quotes differ from the
+  latest snapshot's, not when the payload hash differs. `payload_hash`
+  is kept as provenance. Existing duplicate rows were not removed.
+- `SNAPSHOT_RETENTION_DAYS` is now honoured by a daily job; default
+  `0`, unset in production, so nothing is deleted there.
+- The v1 wire format is untouched (`docs/openapi.json` unchanged).
+- Audit findings **not** addressed here, still open: the rate limiter
+  trusts the leftmost `X-Forwarded-For` entry, which a client can set
+  (a spoofed value got a fresh bucket in production); the engine has no
+  connect or statement timeout; a hung crawl holds its in-flight claim
+  until restart.
 
 ## 7. Running locally
 

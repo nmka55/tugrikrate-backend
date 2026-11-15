@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.models.snapshot import RateSnapshot, Source, SourceState, utc_now
@@ -66,15 +66,34 @@ def latest_snapshot(db: Session, source_id: str) -> RateSnapshot | None:
 
 
 def latest_snapshots(db: Session) -> dict[str, RateSnapshot]:
-    """Most recent snapshot per source, in one pass."""
-    newest: dict[str, RateSnapshot] = {}
-    for row in db.scalars(
-        select(RateSnapshot).order_by(
-            RateSnapshot.fetched_at.asc(), RateSnapshot.id.asc()
+    """Most recent snapshot per source, in one query.
+
+    Ranked inside the database so exactly one row per source crosses
+    the wire. This used to select the whole table and keep the last row
+    per source in Python, which made every /v1/rates and /v1/fx request
+    download the full history (2026-11-15: >= 1,937 rows, >= 12.6 MB of
+    quotes JSON, 2.6-3.6 s per request on the free instance). A window
+    function rather than Postgres's DISTINCT ON so the same statement
+    runs on SQLite; the order matches `latest_snapshot`.
+    """
+    newest = (
+        func.row_number()
+        .over(
+            partition_by=RateSnapshot.source_id,
+            order_by=(
+                RateSnapshot.fetched_at.desc(),
+                RateSnapshot.id.desc(),
+            ),
         )
-    ):
-        newest[row.source_id] = row
-    return newest
+        .label("newest")
+    )
+    ranked = select(RateSnapshot.id, newest).subquery()
+    rows = db.scalars(
+        select(RateSnapshot)
+        .join(ranked, RateSnapshot.id == ranked.c.id)
+        .where(ranked.c.newest == 1)
+    )
+    return {row.source_id: row for row in rows}
 
 
 def source_states(db: Session) -> dict[str, SourceState]:
@@ -97,8 +116,19 @@ def record_success(
 ) -> tuple[RateSnapshot, bool]:
     """Persist a successful crawl.
 
-    Returns (snapshot, inserted). `inserted` is False when the payload
-    was unchanged and only `last_checked_at` moved.
+    Returns (snapshot, inserted). `inserted` is False when the quotes
+    were unchanged and only `last_checked_at` moved.
+
+    "Changed" means the published quotes differ from the latest
+    snapshot's - not the payload hash. Payloads carry fields the feed
+    never publishes (Golomt's `tvalue`/`*_diff`/`*_status`, the Bank of
+    Mongolia column in the Playwright tables), so the hash moved while
+    the rates did not: on 2026-11-15 at least 998 of 1,937 snapshots
+    repeated the previous one's quotes exactly (Golomt 431 of 499).
+    Comparing what is actually served also means a mapping fix takes
+    effect on the next crawl instead of waiting for the bank's payload
+    to change. `payload_hash` is still recorded on each new row, as the
+    payload those quotes were first seen in.
     """
     now = utc_now()
     state = _state_for(db, spec.id)
@@ -108,7 +138,8 @@ def record_success(
     state.last_error = None
 
     previous = latest_snapshot(db, spec.id)
-    if previous is not None and previous.payload_hash == payload_hash:
+    quotes = serialize_quotes(result)
+    if previous is not None and previous.quotes == quotes:
         previous.last_checked_at = now
         # A source can restate the same rates under a newer publication
         # date; that is worth recording without opening a new snapshot.
@@ -126,7 +157,7 @@ def record_success(
         published_at=result.published_at,
         last_checked_at=now,
         payload_hash=payload_hash,
-        quotes=serialize_quotes(result),
+        quotes=quotes,
     )
     db.add(snapshot)
     db.commit()
@@ -154,23 +185,20 @@ def record_failure(db: Session, spec: SourceSpec, error: str) -> None:
 
 def prune_snapshots(db: Session, keep_days: int) -> int:
     """Drop snapshots older than `keep_days`, always keeping the most
-    recent one per source so a quiet source never vanishes."""
+    recent one per source so a quiet source never vanishes.
+
+    One DELETE statement, so pruning never loads the rows it removes.
+    Called by app/services/retention.py on a daily schedule.
+    """
     if keep_days <= 0:
         return 0
     cutoff = datetime.now(timezone.utc) - timedelta(days=keep_days)
-    keep_ids = {
-        snapshot.id
-        for snapshot in latest_snapshots(db).values()
-        if snapshot is not None
-    }
-    removed = 0
-    for row in db.scalars(
-        select(RateSnapshot).where(RateSnapshot.fetched_at < cutoff)
-    ):
-        if row.id not in keep_ids:
-            db.delete(row)
-            removed += 1
+    keep_ids = [snapshot.id for snapshot in latest_snapshots(db).values()]
+    statement = delete(RateSnapshot).where(RateSnapshot.fetched_at < cutoff)
+    if keep_ids:
+        statement = statement.where(RateSnapshot.id.not_in(keep_ids))
+    removed = db.execute(statement).rowcount
+    db.commit()
     if removed:
-        db.commit()
         logger.info(f"Pruned {removed} snapshot(s) older than {keep_days}d")
     return removed

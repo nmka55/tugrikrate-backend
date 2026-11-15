@@ -22,6 +22,7 @@ from apscheduler.triggers.cron import CronTrigger
 from app.config import config
 from app.services.collector import crawl_sources
 from app.services.freshness import slots_for
+from app.services.retention import prune_job
 from app.sources.registry import (
     CADENCE_DAILY,
     CADENCE_FAST,
@@ -121,7 +122,42 @@ def build_scheduler(group: str | None = None) -> BackgroundScheduler:
             daily,
             _cron_fields(24 * 60 // config.INTL_CRAWLS_PER_DAY, range(24)),
         )
+    _register_retention(scheduler, group)
     return scheduler
+
+
+# Local time. Clear of every crawl slot: JSON banks run at 00:00 and
+# 06:00 overnight, Playwright banks at 23:00 and 04:00.
+PRUNE_HOUR, PRUNE_MINUTE = 3, 30
+
+
+def _register_retention(scheduler: BackgroundScheduler, group: str) -> None:
+    """Daily prune, only when SNAPSHOT_RETENTION_DAYS is set.
+
+    The prune covers every source's rows, so in a fast/slow split it
+    belongs to exactly one process - the one that is not `slow` - and
+    two processes never issue the same DELETE at once.
+    """
+    if config.SNAPSHOT_RETENTION_DAYS <= 0 or group == "slow":
+        return
+    scheduler.add_job(
+        prune_job,
+        trigger=CronTrigger(
+            timezone=config.CRAWL_TIMEZONE,
+            hour=PRUNE_HOUR,
+            minute=PRUNE_MINUTE,
+        ),
+        id="prune-snapshots",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=3600,
+        replace_existing=True,
+    )
+    logger.info(
+        f"Scheduled prune-snapshots: keep {config.SNAPSHOT_RETENTION_DAYS} "
+        f"day(s), at {PRUNE_HOUR:02d}:{PRUNE_MINUTE:02d} "
+        f"({config.CRAWL_TIMEZONE})"
+    )
 
 
 def _check_call_budget(specs: tuple) -> None:

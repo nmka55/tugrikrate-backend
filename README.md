@@ -137,12 +137,13 @@ Every trigger carries random jitter (`CRAWL_JITTER_SECONDS`, default
 ±90s) so no bank is hit on an exact boundary; set it to `0` for exact
 times.
 
-**Snapshots.** A `rate_snapshots` row is written only when the payload
-hash changes. An unchanged crawl bumps `last_checked_at` on the existing
-row. The hash is taken over a *canonical* payload — JSON re-serialised
-with sorted keys and volatile fields removed — because rendered pages
-carry build ids and analytics state that change on every load, and some
-JSON APIs embed data that moves without the rates moving.
+**Snapshots.** A `rate_snapshots` row is written only when the
+published quotes change. An unchanged crawl bumps `last_checked_at` on
+the existing row. Each row also records a hash of the *canonical*
+payload — JSON re-serialised with sorted keys and volatile fields
+removed — as provenance; it does not decide whether a row is written,
+because payloads carry fields the feed never publishes and those move
+without the rates moving.
 
 **Isolation.** Every source crawls in its own try/except with its own
 database session. One bank failing cannot affect another's result, and
@@ -288,7 +289,7 @@ Everything has a working default; see `app/config.py` for the full list.
 | `STALE_AFTER_INTERVALS` | `3` | Missed gaps between crawl times before `stale` |
 | `FAILING_AFTER_ATTEMPTS` | `3` | Consecutive failures before `failing` |
 | `PUBLISHED_STALE_HOURS` | `36` | Publication age before `stale` |
-| `SNAPSHOT_RETENTION_DAYS` | `0` | `0` keeps everything |
+| `SNAPSHOT_RETENTION_DAYS` | `0` | `0` keeps everything; above `0`, a daily job (03:30 local) drops older snapshots, always keeping each source's newest |
 | `MAX_WORKERS` / `PLAYWRIGHT_MAX_WORKERS` | `8` / `3` | Crawl concurrency |
 | `CRAWL_BATCH_DEADLINE_SECONDS` | `600` | How long a run waits for its sources; overdue ones keep running and still save |
 | `SELF_PING_URL` | (empty) | Keeps a sleeping free-tier instance awake |

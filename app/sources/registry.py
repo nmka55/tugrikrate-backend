@@ -123,8 +123,8 @@ class SourceSpec:
     slots: tuple[Slot, ...]
     evidence: str
     # JSON keys dropped before hashing the payload, because they change
-    # without the rates changing and would otherwise force a new
-    # snapshot on every single crawl.
+    # without the rates changing. They keep the recorded payload_hash
+    # stable; whether a snapshot is written is decided on the quotes.
     volatile_keys: frozenset[str] = field(default_factory=frozenset)
     # Overrides PUBLISHED_STALE_HOURS for sources whose stated date
     # legitimately lags longer (weekends, provider holidays).

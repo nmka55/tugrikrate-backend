@@ -63,13 +63,16 @@ correctness bug, not a style question.
 - `app/sources/adapter.py` — reads only the cells a source's registry
   entry declares real and emits `Quote` objects. This is where
   invariant 2 is enforced.
-- `app/sources/payload.py` — canonical payload bytes and the hash that
-  decides whether a snapshot is written.
+- `app/sources/payload.py` — canonical payload bytes and the hash
+  recorded on each snapshot. Provenance only: a snapshot is written
+  when the *quotes* change (`record_success`), not when the hash does.
 - `app/services/collector.py` — per-source crawl with its own session
   and its own try/except. `app/services/scheduler.py` — APScheduler
   cron triggers. `app/services/freshness.py` — cadence and the
   ok/stale/failing rules, shared by both so they cannot drift.
 - `app/db/snapshots.py` — insert-on-change, bump-on-no-change.
+  `latest_snapshots` must stay one row per source: selecting the whole
+  table made every feed request download the full history.
 - `app/api/routers/v1.py` — the public contract. Treat it as frozen;
   `tests/test_v1_contract.py` asserts the wire format key by key. Any
   change here must also update `docs/mobile-integration-prompt.md`,

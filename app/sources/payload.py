@@ -1,8 +1,12 @@
-"""Canonical payload bytes and the hash snapshots are keyed on.
+"""Canonical payload bytes and the hash recorded on each snapshot.
 
-A new `rate_snapshots` row is written only when the payload hash
-changes, so the hash has to be stable across crawls that returned the
-same rates. Hashing the raw HTTP body does not achieve that:
+Since 2026-11-15 the hash is provenance, not the change detector: a
+new `rate_snapshots` row is written when the *quotes* change
+(`record_success` in app/db/snapshots.py), because payloads also carry
+fields the feed never publishes and those moved the hash without the
+rates moving. The hash should still be as stable as it can be across
+crawls that returned the same rates, and hashing the raw HTTP body
+does not achieve that:
 
 - Rendered pages (the Playwright five) carry build ids, CSRF tokens and
   analytics state that differ on every single load, so a raw hash would

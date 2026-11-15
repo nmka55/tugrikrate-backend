@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+### Feed query, change detection and retention (2026-11-15)
+
+- Fixed: `/v1/rates` and `/v1/fx` read the whole `rate_snapshots` table
+  on every request (>= 1,937 rows, >= 12.6 MB; 2.6-3.6 s in production).
+  They now fetch one row per source in a single ranked query.
+- Fixed: a snapshot is written when the published quotes change, not
+  when the payload hash does. At least 998 of 1,937 stored snapshots
+  repeated the previous one's quotes (Golomt 431 of 499) because
+  payloads carry unpublished fields. `payload_hash` is still recorded.
+  Existing duplicate rows are left in place.
+- Fixed: `SNAPSHOT_RETENTION_DAYS` was never read and `prune_snapshots`
+  never called. A daily job now applies it; default `0` keeps
+  everything, so behaviour is unchanged unless it is set.
+- The v1 response contract is unchanged. Evidence: ARCHITECTURE.md §5.
+
 ### Upstream maintenance and Render audit (2026-10-31)
 
 - Released maintenance commit `e735b79` to the existing Render service;

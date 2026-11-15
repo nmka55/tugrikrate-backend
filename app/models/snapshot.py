@@ -80,10 +80,12 @@ class Source(Base):
 class RateSnapshot(Base):
     """One distinct set of published rates from one source.
 
-    A row is inserted only when `payload_hash` differs from the latest
-    row for that source. An unchanged crawl bumps `last_checked_at` on
-    the existing row instead, so the table grows with real rate changes
-    rather than with crawl frequency.
+    A row is inserted only when `quotes` differ from the latest row for
+    that source. An unchanged crawl bumps `last_checked_at` on the
+    existing row instead, so the table grows with real rate changes
+    rather than with crawl frequency. `payload_hash` records the
+    payload the quotes were first seen in; it no longer decides
+    anything (see `record_success` in app/db/snapshots.py).
     """
 
     __tablename__ = "rate_snapshots"
