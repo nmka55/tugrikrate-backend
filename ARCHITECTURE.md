@@ -1022,6 +1022,7 @@ upstream `6cde736` (October 26) against common ancestor `73b1db8`.
   a 31-day month: **744 hours**, leaving six. Keep the bank/FX cadence.
   Self-ping now defaults to **600 seconds** rather than 30, reducing
   requests by 95%; this does not change running-instance hours.
+
 **2026-11-15 — feed query, change detection, retention.**
 
 Found by a read-only audit of the code against production (public
@@ -1038,6 +1039,22 @@ job".
 - `SNAPSHOT_RETENTION_DAYS` is now honoured by a daily job; default
   `0`, unset in production, so nothing is deleted there.
 - The v1 wire format is untouched (`docs/openapi.json` unchanged).
+- Released as `7bc1e50`; CI and the Docker test job passed at 08:41
+  UTC. Production, measured from outside at 08:46 UTC: `/v1/rates`
+  0.27-0.50 s (was 2.6-3.6 s) and `/v1/fx` 0.23-0.24 s (was 2.9 s),
+  level with `/api/health` at 0.25 s. All 15 sources returned the same
+  quotes, counts and statuses as the capture taken before the deploy
+  (63,664 bytes both times), so the ranked query is confirmed on Neon
+  Postgres, which could not be tested locally. The deploy itself was
+  inferred from the latency change, not read from the Render dashboard.
+- The first bank crawl on the new code (09:16 UTC) moved
+  `last_checked_at` on Golomt, Bank of Mongolia, Khan and State Bank
+  and inserted no row for any of them. That confirms crawls and writes
+  work after the deploy; it is one crawl, and whether a payload hash
+  differed on it is not observable (the hash is not updated on a bump),
+  so it is not proof that a duplicate was prevented. Watch Golomt's
+  history over a few days: before the fix it gained a row on almost
+  every crawl.
 - Audit findings **not** addressed here, still open: the rate limiter
   trusts the leftmost `X-Forwarded-For` entry, which a client can set
   (a spoofed value got a fresh bucket in production); the engine has no
